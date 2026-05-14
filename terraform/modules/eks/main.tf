@@ -256,3 +256,17 @@ resource "aws_iam_role_policy_attachment" "lb_controller" {
   role       = aws_iam_role.lb_controller.name
   policy_arn = aws_iam_policy.lb_controller.arn
 }
+
+
+# ── Allow EKS cluster managed SG to reach RDS ────────────────────────────────
+# EKS creates its own managed SG for nodes. We add a rule to allow it to
+# reach RDS. This avoids circular dependency between VPC and EKS modules.
+resource "aws_security_group_rule" "rds_from_eks_managed_sg" {
+  type                     = "ingress"
+  from_port                = 3306
+  to_port                  = 3306
+  protocol                 = "tcp"
+  security_group_id        = var.rds_sg_id
+  source_security_group_id = aws_eks_cluster.main.vpc_config[0].cluster_security_group_id
+  description              = "Allow EKS managed node SG to reach RDS"
+}

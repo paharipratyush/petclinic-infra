@@ -80,3 +80,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "rds_sg_id" {
+  description = "RDS security group ID to allow MySQL access from EKS nodes"
+  type        = string
+  default     = ""
+}

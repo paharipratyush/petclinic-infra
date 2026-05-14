@@ -161,6 +161,7 @@ resource "aws_security_group_rule" "rds_ingress_nodes" {
   description              = "MySQL from EKS nodes only"
 }
 
+
 # ── Security Group: ALB ───────────────────────────────────────────────────────
 resource "aws_security_group" "alb" {
   name        = "${var.project}-${var.environment}-alb-sg"

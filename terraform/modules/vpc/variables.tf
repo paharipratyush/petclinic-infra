@@ -28,3 +28,10 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "eks_cluster_managed_sg_id" {
+  description = "EKS cluster managed security group ID (created by EKS, not Terraform)"
+  type        = string
+  default     = ""
+}
+

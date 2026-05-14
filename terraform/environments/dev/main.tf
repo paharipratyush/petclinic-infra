@@ -25,6 +25,7 @@ module "eks" {
   node_min_size       = var.node_min_size
   node_max_size       = var.node_max_size
   node_desired_size   = var.node_desired_size
+  rds_sg_id           = module.vpc.rds_sg_id
 }
 
 
