@@ -94,3 +94,15 @@ variable "cloudflare_api_token" {
   type        = string
   sensitive   = true
 }
+
+variable "alb_dns_name" {
+  description = "App ALB DNS name (from kubectl get ingress)"
+  type        = string
+  default     = ""
+}
+
+variable "monitoring_alb_dns_name" {
+  description = "Monitoring ALB DNS name (from kubectl get ingress)"
+  type        = string
+  default     = ""
+}

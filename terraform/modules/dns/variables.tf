@@ -29,3 +29,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "monitoring_alb_dns_name" {
+  description = "ALB DNS name for monitoring tools (Grafana, ArgoCD)"
+  type        = string
+  default     = ""
+}

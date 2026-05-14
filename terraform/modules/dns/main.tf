@@ -61,22 +61,22 @@ resource "cloudflare_record" "app" {
 }
 
 resource "cloudflare_record" "grafana" {
-  count = var.alb_dns_name != "" ? 1 : 0
+  count = var.monitoring_alb_dns_name != "" ? 1 : 0
 
   zone_id = var.cloudflare_zone_id
   name    = var.environment == "prod" ? "grafana" : "grafana-dev"
-  content = var.alb_dns_name
+  content = var.monitoring_alb_dns_name
   type    = "CNAME"
   ttl     = 1
   proxied = false
 }
 
 resource "cloudflare_record" "argocd" {
-  count = var.alb_dns_name != "" ? 1 : 0
+  count = var.monitoring_alb_dns_name != "" ? 1 : 0
 
   zone_id = var.cloudflare_zone_id
   name    = var.environment == "prod" ? "argocd" : "argocd-dev"
-  content = var.alb_dns_name
+  content = var.monitoring_alb_dns_name
   type    = "CNAME"
   ttl     = 1
   proxied = false

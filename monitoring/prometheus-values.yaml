@@ -1,0 +1,61 @@
+server:
+  persistentVolume:
+    enabled: true
+    size: 10Gi
+    storageClass: gp2
+  retention: "7d"
+  global:
+    scrape_interval: 15s
+    evaluation_interval: 15s
+
+# Disable components we don't need
+alertmanager:
+  enabled: false  # We'll install separately
+
+pushgateway:
+  enabled: false
+
+nodeExporter:
+  enabled: true
+
+# Custom scrape configs for petclinic services
+server:
+  persistentVolume:
+    enabled: true
+    size: 10Gi
+    storageClass: gp2
+  retention: "7d"
+  global:
+    scrape_interval: 15s
+    evaluation_interval: 15s
+
+alertmanager:
+  enabled: false
+
+pushgateway:
+  enabled: false
+
+nodeExporter:
+  enabled: true
+
+extraScrapeConfigs: |
+  - job_name: api-gateway
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['api-gateway.petclinic-dev:8080']
+  - job_name: customers-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['customers-service.petclinic-dev:8081']
+  - job_name: visits-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['visits-service.petclinic-dev:8082']
+  - job_name: vets-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['vets-service.petclinic-dev:8083']
+  - job_name: genai-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['genai-service.petclinic-dev:8084']

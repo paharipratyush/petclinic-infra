@@ -72,9 +72,10 @@ module "secrets" {
 module "dns" {
   source = "../../modules/dns"
 
-  project            = var.project
-  environment        = var.environment
-  domain_name        = var.domain_name
-  cloudflare_zone_id = var.cloudflare_zone_id
-  alb_dns_name       = "k8s-petclini-petclini-00eca135a7-1293325932.ap-south-1.elb.amazonaws.com"
+  project                 = var.project
+  environment             = var.environment
+  domain_name             = var.domain_name
+  cloudflare_zone_id      = var.cloudflare_zone_id
+  alb_dns_name            = var.alb_dns_name
+  monitoring_alb_dns_name = var.monitoring_alb_dns_name
 }

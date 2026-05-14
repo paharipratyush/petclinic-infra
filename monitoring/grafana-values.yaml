@@ -1,0 +1,49 @@
+adminPassword: "petclinic-grafana-2026"
+
+persistence:
+  enabled: true
+  size: 5Gi
+  storageClassName: gp2
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus
+        url: http://prometheus-server.monitoring:80
+        access: proxy
+        isDefault: true
+      - name: Loki
+        type: loki
+        uid: loki
+        url: http://loki.monitoring:3100
+        access: proxy
+
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: default
+        orgId: 1
+        folder: Petclinic
+        type: file
+        disableDeletion: false
+        options:
+          path: /var/lib/grafana/dashboards/default
+
+dashboards:
+  default:
+    spring-boot:
+      gnetId: 4701
+      revision: 1
+      datasource: Prometheus
+    jvm-micrometer:
+      gnetId: 11955
+      revision: 1
+      datasource: Prometheus
+
+grafana.ini:
+  server:
+    root_url: https://grafana-dev.praty.dev
