@@ -275,7 +275,7 @@ resource "aws_security_group_rule" "rds_from_eks_managed_sg" {
 # ── Allow ALB to reach pods directly (target-type: ip) ───────────────────────
 resource "aws_security_group_rule" "pods_from_alb" {
   type                     = "ingress"
-  from_port                = 8080
+  from_port                = 3000
   to_port                  = 9090
   protocol                 = "tcp"
   security_group_id        = aws_eks_cluster.main.vpc_config[0].cluster_security_group_id
