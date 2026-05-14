@@ -27,3 +27,13 @@ output "kubeconfig_command" {
   description = "Run this to configure kubectl"
   value       = module.eks.kubeconfig_command
 }
+
+output "ecr_registry_url" {
+  description = "ECR registry base URL"
+  value       = module.ecr.registry_url
+}
+
+output "ecr_repository_urls" {
+  description = "All ECR repository URLs"
+  value       = module.ecr.repository_urls
+}

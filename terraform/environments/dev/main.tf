@@ -26,3 +26,13 @@ module "eks" {
   node_max_size       = var.node_max_size
   node_desired_size   = var.node_desired_size
 }
+
+
+# ── ECR ───────────────────────────────────────────────────────────────────────
+module "ecr" {
+  source = "../../modules/ecr"
+
+  project              = var.project
+  environment          = var.environment
+  image_tag_mutability = "MUTABLE"
+}
