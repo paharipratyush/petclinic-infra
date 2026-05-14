@@ -52,3 +52,23 @@ module "rds" {
   skip_final_snapshot     = true
   deletion_protection     = false
 }
+
+
+# ── Secrets (non-RDS) ─────────────────────────────────────────────────────────
+module "secrets" {
+  source = "../../modules/secrets"
+
+  project        = var.project
+  environment    = var.environment
+  openai_api_key = var.openai_api_key
+}
+
+
+# ── DNS + ACM ─────────────────────────────────────────────────────────────────
+module "dns" {
+  source = "../../modules/dns"
+
+  project     = var.project
+  environment = var.environment
+  domain_name = var.domain_name
+}

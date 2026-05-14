@@ -52,3 +52,20 @@ output "rds_jdbc_url" {
   description = "JDBC URL for Spring Boot services"
   value       = module.rds.jdbc_url
 }
+
+
+output "openai_secret_arn" {
+  description = "OpenAI API key secret ARN"
+  value       = module.secrets.openai_secret_arn
+}
+
+
+output "certificate_arn" {
+  description = "ACM wildcard certificate ARN"
+  value       = module.dns.certificate_arn
+}
+
+output "zone_id" {
+  description = "Route 53 hosted zone ID"
+  value       = module.dns.zone_id
+}
