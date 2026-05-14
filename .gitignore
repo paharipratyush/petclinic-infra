@@ -1,0 +1,43 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+*.tfplan
+*.plan
+*.out
+plan.out
+
+# Sensitive files
+*.pem
+*.key
+*.p12
+.env
+.env.*
+creds.yaml
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.iml
+Thumbs.db
+
+# Helm
+*.tgz
+
+
+# Generated backend config (contains account-specific values, never commit)
+config/
+backend.hcl
+backend-*.hcl
