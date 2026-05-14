@@ -1,6 +1,6 @@
 image:
   repository: 482352877891.dkr.ecr.ap-south-1.amazonaws.com/petclinic-dev/api-gateway
-  tag: v1.0.0
+  tag: a552094
 
 service:
   port: 8080
