@@ -1,14 +1,10 @@
-# ── Look up existing hosted zone ──────────────────────────────────────────────
-# The hosted zone must already exist (created when you registered the domain).
-# We use a data source — we do NOT create a new hosted zone.
+# ── Look up existing Route 53 hosted zone (for ACM validation) ────────────────
 data "aws_route53_zone" "main" {
   name         = var.domain_name
   private_zone = false
 }
 
 # ── ACM Wildcard Certificate ──────────────────────────────────────────────────
-# Wildcard covers: *.praty.dev
-# This allows: petclinic.praty.dev, grafana.praty.dev, argocd.praty.dev, etc.
 resource "aws_acm_certificate" "wildcard" {
   domain_name               = var.domain_name
   subject_alternative_names = ["*.${var.domain_name}"]
@@ -23,27 +19,76 @@ resource "aws_acm_certificate" "wildcard" {
   })
 }
 
-# ── DNS validation records ────────────────────────────────────────────────────
-resource "aws_route53_record" "cert_validation" {
+# ── ACM validation records in Cloudflare ─────────────────────────────────────
+resource "cloudflare_record" "acm_validation" {
   for_each = {
     for dvo in aws_acm_certificate.wildcard.domain_validation_options :
     dvo.domain_name => {
-      name   = dvo.resource_record_name
-      record = dvo.resource_record_value
-      type   = dvo.resource_record_type
+      name  = trimsuffix(dvo.resource_record_name, ".${var.domain_name}.")
+      value = trimsuffix(dvo.resource_record_value, ".")
+      type  = dvo.resource_record_type
     }
   }
 
-  allow_overwrite = true
+  zone_id         = var.cloudflare_zone_id
   name            = each.value.name
-  records         = [each.value.record]
-  ttl             = 60
+  content         = each.value.value
   type            = each.value.type
-  zone_id         = data.aws_route53_zone.main.zone_id
+  ttl             = 60
+  proxied         = false
+  allow_overwrite = true
 }
 
-# ── Wait for certificate validation ──────────────────────────────────────────
+# ── Wait for ACM certificate validation ───────────────────────────────────────
 resource "aws_acm_certificate_validation" "wildcard" {
-  certificate_arn         = aws_acm_certificate.wildcard.arn
-  validation_record_fqdns = [for record in aws_route53_record.cert_validation : record.fqdn]
+  certificate_arn = aws_acm_certificate.wildcard.arn
+
+  # Validation records are in Cloudflare — just wait for ACM to confirm
+  depends_on = [cloudflare_record.acm_validation]
+}
+
+# ── Application DNS records in Cloudflare ────────────────────────────────────
+# These are created only after the ALB exists (alb_dns_name is provided)
+resource "cloudflare_record" "app" {
+  count = var.alb_dns_name != "" ? 1 : 0
+
+  zone_id = var.cloudflare_zone_id
+  name    = var.environment == "prod" ? "petclinic" : "petclinic-dev"
+  content = var.alb_dns_name
+  type    = "CNAME"
+  ttl     = 1
+  proxied = false
+}
+
+resource "cloudflare_record" "grafana" {
+  count = var.alb_dns_name != "" ? 1 : 0
+
+  zone_id = var.cloudflare_zone_id
+  name    = var.environment == "prod" ? "grafana" : "grafana-dev"
+  content = var.alb_dns_name
+  type    = "CNAME"
+  ttl     = 1
+  proxied = false
+}
+
+resource "cloudflare_record" "argocd" {
+  count = var.alb_dns_name != "" ? 1 : 0
+
+  zone_id = var.cloudflare_zone_id
+  name    = var.environment == "prod" ? "argocd" : "argocd-dev"
+  content = var.alb_dns_name
+  type    = "CNAME"
+  ttl     = 1
+  proxied = false
+}
+
+resource "cloudflare_record" "admin" {
+  count = var.alb_dns_name != "" ? 1 : 0
+
+  zone_id = var.cloudflare_zone_id
+  name    = var.environment == "prod" ? "admin" : "admin-dev"
+  content = var.alb_dns_name
+  type    = "CNAME"
+  ttl     = 1
+  proxied = false
 }

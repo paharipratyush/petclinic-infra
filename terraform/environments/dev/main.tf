@@ -68,7 +68,9 @@ module "secrets" {
 module "dns" {
   source = "../../modules/dns"
 
-  project     = var.project
-  environment = var.environment
-  domain_name = var.domain_name
+  project            = var.project
+  environment        = var.environment
+  domain_name        = var.domain_name
+  cloudflare_zone_id = var.cloudflare_zone_id
+  # alb_dns_name is added after ALB is created (Phase 4)
 }

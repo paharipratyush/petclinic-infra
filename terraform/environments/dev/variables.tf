@@ -82,3 +82,15 @@ variable "openai_api_key" {
   sensitive   = true
   default     = ""
 }
+
+
+variable "cloudflare_zone_id" {
+  description = "Cloudflare Zone ID for the domain"
+  type        = string
+}
+
+variable "cloudflare_api_token" {
+  description = "Cloudflare API token with DNS edit permissions"
+  type        = string
+  sensitive   = true
+}
