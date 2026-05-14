@@ -1,0 +1,25 @@
+image:
+  repository: 482352877891.dkr.ecr.ap-south-1.amazonaws.com/petclinic-dev/config-server
+  tag: v1.0.0
+
+service:
+  port: 8888
+
+probes:
+  startup:
+    path: /actuator/health
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    failureThreshold: 30
+  readiness:
+    path: /actuator/health
+    periodSeconds: 10
+    failureThreshold: 3
+  liveness:
+    path: /actuator/health
+    periodSeconds: 15
+    failureThreshold: 3
+
+env:
+  - name: SPRING_PROFILES_ACTIVE
+    value: "docker"

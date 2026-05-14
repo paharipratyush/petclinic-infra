@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "petclinic-service.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "petclinic-service.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.port }}
+      protocol: TCP
+  selector:
+    {{- include "petclinic-service.selectorLabels" . | nindent 4 }}
