@@ -36,3 +36,19 @@ module "ecr" {
   environment          = var.environment
   image_tag_mutability = "MUTABLE"
 }
+
+
+# ── RDS ───────────────────────────────────────────────────────────────────────
+module "rds" {
+  source = "../../modules/rds"
+
+  project                 = var.project
+  environment             = var.environment
+  subnet_ids              = module.vpc.public_subnet_ids
+  rds_sg_id               = module.vpc.rds_sg_id
+  instance_class          = var.rds_instance_class
+  multi_az                = false
+  backup_retention_period = 7
+  skip_final_snapshot     = true
+  deletion_protection     = false
+}

@@ -37,3 +37,18 @@ output "ecr_repository_urls" {
   description = "All ECR repository URLs"
   value       = module.ecr.repository_urls
 }
+
+output "rds_endpoint" {
+  description = "RDS endpoint"
+  value       = module.rds.endpoint
+}
+
+output "rds_secret_arn" {
+  description = "RDS credentials secret ARN"
+  value       = module.rds.secret_arn
+}
+
+output "rds_jdbc_url" {
+  description = "JDBC URL for Spring Boot services"
+  value       = module.rds.jdbc_url
+}
