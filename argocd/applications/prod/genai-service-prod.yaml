@@ -1,0 +1,24 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: genai-service-prod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/paharipratyush/petclinic-infra.git
+    targetRevision: main
+    path: helm/petclinic-service
+    helm:
+      releaseName: genai-service
+      valueFiles:
+        - ../../helm-values/genai-service.yaml
+        - ../../helm-values/prod.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: petclinic-prod
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=false

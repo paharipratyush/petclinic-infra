@@ -1,0 +1,27 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: visits-service-dev
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/paharipratyush/petclinic-infra.git
+    targetRevision: main
+    path: helm/petclinic-service
+    helm:
+      releaseName: visits-service
+      valueFiles:
+        - ../../helm-values/visits-service.yaml
+        - ../../helm-values/dev.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: petclinic-dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
