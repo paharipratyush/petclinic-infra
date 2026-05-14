@@ -20,3 +20,13 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "oidc_provider_arn" {
+  description = "OIDC provider ARN for IRSA"
+  type        = string
+}
+
+variable "oidc_provider_url" {
+  description = "OIDC provider URL for IRSA"
+  type        = string
+}

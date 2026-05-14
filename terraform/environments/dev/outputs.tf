@@ -69,3 +69,13 @@ output "zone_id" {
   description = "Route 53 hosted zone ID"
   value       = module.dns.zone_id
 }
+
+output "eso_role_arn" {
+  description = "ESO IRSA role ARN"
+  value       = module.secrets.eso_role_arn
+}
+
+output "lb_controller_role_arn" {
+  description = "ALB controller IRSA role ARN"
+  value       = module.eks.lb_controller_role_arn
+}

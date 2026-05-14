@@ -37,3 +37,8 @@ output "kubeconfig_command" {
   description = "Command to update kubeconfig"
   value       = "aws eks update-kubeconfig --name ${aws_eks_cluster.main.name} --region ${var.aws_region}"
 }
+
+output "lb_controller_role_arn" {
+  description = "IRSA role ARN for AWS Load Balancer Controller"
+  value       = aws_iam_role.lb_controller.arn
+}
