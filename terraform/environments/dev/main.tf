@@ -79,3 +79,12 @@ module "dns" {
   alb_dns_name            = var.alb_dns_name
   monitoring_alb_dns_name = var.monitoring_alb_dns_name
 }
+
+# ── GitHub OIDC ───────────────────────────────────────────────────────────────
+module "github_oidc" {
+  source     = "../../modules/github-oidc"
+  project    = var.project
+  aws_region = var.aws_region
+  github_org = "paharipratyush"
+  app_repo   = "spring-petclinic-microservices"
+}

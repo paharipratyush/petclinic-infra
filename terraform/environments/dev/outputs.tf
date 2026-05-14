@@ -79,3 +79,7 @@ output "lb_controller_role_arn" {
   description = "ALB controller IRSA role ARN"
   value       = module.eks.lb_controller_role_arn
 }
+
+output "github_actions_role_arn" {
+  value = module.github_oidc.role_arn
+}
