@@ -202,3 +202,13 @@ resource "aws_security_group_rule" "alb_egress_nodes" {
   source_security_group_id = aws_security_group.eks_node.id
   description              = "Outbound to EKS nodes only"
 }
+
+resource "aws_security_group_rule" "alb_egress_pods" {
+  type              = "egress"
+  from_port         = 8080
+  to_port           = 9090
+  protocol          = "tcp"
+  security_group_id = aws_security_group.alb.id
+  cidr_blocks       = ["10.0.0.0/16"]
+  description       = "Allow ALB to reach pods directly (target-type: ip)"
+}

@@ -86,3 +86,9 @@ variable "rds_sg_id" {
   type        = string
   default     = ""
 }
+
+variable "alb_sg_id" {
+  description = "ALB security group ID to allow traffic to pods"
+  type        = string
+  default     = ""
+}

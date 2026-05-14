@@ -26,6 +26,7 @@ module "eks" {
   node_max_size       = var.node_max_size
   node_desired_size   = var.node_desired_size
   rds_sg_id           = module.vpc.rds_sg_id
+  alb_sg_id = module.vpc.alb_sg_id
 }
 
 
@@ -75,5 +76,5 @@ module "dns" {
   environment        = var.environment
   domain_name        = var.domain_name
   cloudflare_zone_id = var.cloudflare_zone_id
-  # alb_dns_name is added after ALB is created (Phase 4)
+  alb_dns_name       = "k8s-petclini-petclini-00eca135a7-1293325932.ap-south-1.elb.amazonaws.com"
 }
