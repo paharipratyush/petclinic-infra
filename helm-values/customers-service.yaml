@@ -2,10 +2,8 @@ image:
   # Updated by scripts/generate-config.sh after terraform apply
   repository: 482352877891.dkr.ecr.ap-south-1.amazonaws.com/petclinic-dev/customers-service
   tag: v1.0.0
-
 service:
   port: 8081
-
 env:
   - name: SPRING_PROFILES_ACTIVE
     value: "docker,mysql"
@@ -13,7 +11,7 @@ env:
     value: "http://config-server:8888"
   # Updated by scripts/generate-config.sh after terraform apply
   - name: SPRING_DATASOURCE_URL
-    value: "jdbc:mysql://PLACEHOLDER_RDS_ENDPOINT:3306/petclinic"
+    value: "jdbc:mysql://petclinic-dev-mysql.cbsumcwgg4sm.ap-south-1.rds.amazonaws.com:3306/petclinic"
   - name: SPRING_DATASOURCE_USERNAME
     valueFrom:
       secretKeyRef:
@@ -29,7 +27,6 @@ env:
     value: "http://zipkin.tracing:9411/api/v2/spans"
   - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
     value: "1.0"
-
 initContainers:
   - name: wait-for-config-server
     image: busybox:1.36

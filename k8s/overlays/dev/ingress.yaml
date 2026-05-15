@@ -10,7 +10,7 @@ metadata:
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/certificate-arn: CERT_ARN_PLACEHOLDER
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:482352877891:certificate/c5604ab4-6107-4636-83ea-d96e9bb5d851
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
     alb.ingress.kubernetes.io/ssl-redirect: "443"
     alb.ingress.kubernetes.io/group.name: petclinic-app
@@ -19,7 +19,7 @@ metadata:
 spec:
   ingressClassName: alb
   rules:
-    - host: PETCLINIC_DEV_HOST_PLACEHOLDER
+    - host: petclinic-dev.praty.dev
       http:
         paths:
           - path: /
@@ -29,7 +29,7 @@ spec:
                 name: api-gateway
                 port:
                   number: 8080
-    - host: ADMIN_DEV_HOST_PLACEHOLDER
+    - host: admin-dev.praty.dev
       http:
         paths:
           - path: /
