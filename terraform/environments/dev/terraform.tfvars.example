@@ -27,6 +27,14 @@ rds_instance_class  = "db.t4g.micro"       # Free tier eligible
 domain_name         = "your-domain.com"    # Must exist in Cloudflare
 iam_admin_username  = "your-iam-username"  # IAM user that gets EKS admin access
 
+# ── GitHub — required for ArgoCD and CI/CD ────────────────────────────────────
+# Your GitHub username or org that owns both repos
+github_org  = "your-github-username"
+# The infrastructure repo name (this repo)
+infra_repo  = "petclinic-infra"
+# Your fork of the application repo
+app_repo    = "spring-petclinic-microservices"
+
 # ── Cloudflare — required ─────────────────────────────────────────────────────
 # Get zone_id: Cloudflare Dashboard → your domain → Overview → Zone ID (right sidebar)
 # Create API token: Cloudflare Dashboard (https://dash.cloudflare.com/profile/api-tokens) → My Profile → API Tokens

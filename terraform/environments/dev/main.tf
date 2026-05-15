@@ -78,10 +78,11 @@ module "dns" {
 }
 
 # ── GitHub OIDC ───────────────────────────────────────────────────────────────
+# ── GitHub OIDC ───────────────────────────────────────────────────────────────
 module "github_oidc" {
   source     = "../../modules/github-oidc"
   project    = var.project
   aws_region = var.aws_region
-  github_org = "paharipratyush"
-  app_repo   = "spring-petclinic-microservices"
+  github_org = var.github_org
+  app_repo   = var.app_repo
 }

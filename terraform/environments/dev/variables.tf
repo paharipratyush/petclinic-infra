@@ -111,3 +111,21 @@ variable "monitoring_alb_dns_name" {
   type        = string
   default     = ""
 }
+
+variable "github_org" {
+  description = "GitHub organization or username that owns the infra repo"
+  type        = string
+  default     = ""
+}
+
+variable "infra_repo" {
+  description = "GitHub repository name for the infra repo (petclinic-infra)"
+  type        = string
+  default     = "petclinic-infra"
+}
+
+variable "app_repo" {
+  description = "GitHub repository name for the app repo (forked spring-petclinic-microservices)"
+  type        = string
+  default     = "spring-petclinic-microservices"
+}

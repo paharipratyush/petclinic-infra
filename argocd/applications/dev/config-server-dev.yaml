@@ -8,7 +8,9 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/paharipratyush/petclinic-infra.git
+    repoURL: for f in argocd/applications/dev/*.yaml argocd/applications/prod/*.yaml; do
+               sed -i 's|repoURL:.*petclinic-infra.*|repoURL: INFRA_REPO_URL_PLACEHOLDER|' "$f"
+             done
     targetRevision: main
     path: helm/petclinic-service
     helm:

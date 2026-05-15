@@ -1,6 +1,6 @@
-# NOTE: The certificate-arn annotation is updated automatically by:
+# NOTE: Host values are updated automatically by:
 #   ./scripts/generate-config.sh dev
-# Do not manually edit the cert ARN — it changes after terraform destroy+apply.
+# Do not manually edit hostnames — they are injected from terraform.tfvars domain_name.
 
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -19,7 +19,7 @@ metadata:
 spec:
   ingressClassName: alb
   rules:
-    - host: petclinic-dev.praty.dev
+    - host: PETCLINIC_DEV_HOST_PLACEHOLDER
       http:
         paths:
           - path: /
@@ -29,7 +29,7 @@ spec:
                 name: api-gateway
                 port:
                   number: 8080
-    - host: admin-dev.praty.dev
+    - host: ADMIN_DEV_HOST_PLACEHOLDER
       http:
         paths:
           - path: /

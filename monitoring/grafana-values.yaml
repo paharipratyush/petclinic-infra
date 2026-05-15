@@ -46,4 +46,4 @@ dashboards:
 
 grafana.ini:
   server:
-    root_url: https://grafana-dev.praty.dev
+    root_url: GRAFANA_ROOT_URL_PLACEHOLDER

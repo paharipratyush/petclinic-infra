@@ -1,6 +1,5 @@
-# NOTE: The certificate-arn annotation is updated automatically by:
+# NOTE: Host values and cert ARN are updated automatically by:
 #   ./scripts/generate-config.sh dev
-# Do not manually edit the cert ARN — it changes after terraform destroy+apply.
 
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -19,7 +18,7 @@ metadata:
 spec:
   ingressClassName: alb
   rules:
-    - host: grafana-dev.praty.dev
+    - host: GRAFANA_DEV_HOST_PLACEHOLDER
       http:
         paths:
           - path: /
@@ -48,7 +47,7 @@ metadata:
 spec:
   ingressClassName: alb
   rules:
-    - host: argocd-dev.praty.dev
+    - host: ARGOCD_DEV_HOST_PLACEHOLDER
       http:
         paths:
           - path: /
