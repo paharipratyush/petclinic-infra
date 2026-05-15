@@ -1,10 +1,13 @@
 image:
+  # Updated by scripts/generate-config.sh after terraform apply
   repository: 482352877891.dkr.ecr.ap-south-1.amazonaws.com/petclinic-dev/config-server
   tag: v1.0.0
 
 service:
   port: 8888
 
+# Config Server uses /actuator/health for ALL three probes
+# It does not separately expose /readiness and /liveness endpoints
 probes:
   startup:
     path: /actuator/health

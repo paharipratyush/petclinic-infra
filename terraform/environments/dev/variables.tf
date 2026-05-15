@@ -41,9 +41,9 @@ variable "eks_cluster_version" {
 }
 
 variable "node_instance_types" {
-  description = "EC2 instance types for EKS node group"
+  description = "EC2 instance types for EKS node group (ARM64/Graviton)"
   type        = list(string)
-  default     = ["t4g.small"]
+  default     = ["t4g.medium"]
 }
 
 variable "node_min_size" {
@@ -55,13 +55,13 @@ variable "node_min_size" {
 variable "node_max_size" {
   description = "Maximum number of nodes in the node group"
   type        = number
-  default     = 4
+  default     = 6
 }
 
 variable "node_desired_size" {
   description = "Desired number of nodes in the node group"
   type        = number
-  default     = 2
+  default     = 3
 }
 
 variable "rds_instance_class" {
@@ -71,21 +71,26 @@ variable "rds_instance_class" {
 }
 
 variable "domain_name" {
-  description = "Root domain name (must exist as Route 53 hosted zone)"
+  description = "Root domain name managed in Cloudflare"
   type        = string
   default     = "praty.dev"
 }
 
+variable "iam_admin_username" {
+  description = "IAM username that gets EKS cluster admin access. Set to your IAM username."
+  type        = string
+  default     = ""
+}
+
 variable "openai_api_key" {
-  description = "OpenAI API key for the GenAI service"
+  description = "OpenAI API key for the GenAI service. Leave empty for demo mode."
   type        = string
   sensitive   = true
   default     = ""
 }
 
-
 variable "cloudflare_zone_id" {
-  description = "Cloudflare Zone ID for the domain"
+  description = "Cloudflare Zone ID for the domain (from Cloudflare dashboard)"
   type        = string
 }
 
@@ -96,13 +101,13 @@ variable "cloudflare_api_token" {
 }
 
 variable "alb_dns_name" {
-  description = "App ALB DNS name (from kubectl get ingress)"
+  description = "App ALB DNS name — filled by scripts/update-dns-and-ingress.sh after deploy"
   type        = string
   default     = ""
 }
 
 variable "monitoring_alb_dns_name" {
-  description = "Monitoring ALB DNS name (from kubectl get ingress)"
+  description = "Monitoring ALB DNS name — filled by scripts/update-dns-and-ingress.sh after deploy"
   type        = string
   default     = ""
 }

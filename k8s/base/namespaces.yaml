@@ -31,3 +31,17 @@ metadata:
   name: tracing
   labels:
     app.kubernetes.io/part-of: petclinic
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+  labels:
+    app.kubernetes.io/part-of: petclinic
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: external-secrets
+  labels:
+    app.kubernetes.io/part-of: petclinic

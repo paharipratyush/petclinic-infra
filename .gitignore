@@ -41,3 +41,5 @@ Thumbs.db
 config/
 backend.hcl
 backend-*.hcl
+terraform.tfvars
+*.tfvars.sensitive

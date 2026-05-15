@@ -1,3 +1,7 @@
+# NOTE: The certificate-arn annotation is updated automatically by:
+#   ./scripts/generate-config.sh dev
+# Do not manually edit the cert ARN — it changes after terraform destroy+apply.
+
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -6,10 +10,12 @@ metadata:
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:482352877891:certificate/585339a8-201a-4b22-a21c-34e1de288021
+    alb.ingress.kubernetes.io/certificate-arn: CERT_ARN_PLACEHOLDER
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
     alb.ingress.kubernetes.io/ssl-redirect: "443"
     alb.ingress.kubernetes.io/group.name: petclinic-monitoring
+    alb.ingress.kubernetes.io/healthcheck-path: /api/health
+    alb.ingress.kubernetes.io/healthcheck-port: "3000"
 spec:
   ingressClassName: alb
   rules:
@@ -32,7 +38,7 @@ metadata:
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:482352877891:certificate/585339a8-201a-4b22-a21c-34e1de288021
+    alb.ingress.kubernetes.io/certificate-arn: CERT_ARN_PLACEHOLDER
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
     alb.ingress.kubernetes.io/ssl-redirect: "443"
     alb.ingress.kubernetes.io/group.name: petclinic-monitoring

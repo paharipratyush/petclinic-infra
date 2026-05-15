@@ -36,17 +36,17 @@ variable "node_sg_id" {
 variable "cluster_version" {
   description = "Kubernetes version"
   type        = string
-  default     = "1.29"
+  default     = "1.30"
 }
 
 variable "node_instance_types" {
-  description = "EC2 instance types for node group"
+  description = "EC2 instance types for node group (ARM64/Graviton)"
   type        = list(string)
-  default     = ["t4g.small"]
+  default     = ["t4g.medium"]
 }
 
 variable "node_ami_type" {
-  description = "AMI type for nodes (ARM64 = AL2_ARM_64)"
+  description = "AMI type for nodes — AL2_ARM_64 for Graviton (t4g) instances"
   type        = string
   default     = "AL2_ARM_64"
 }
@@ -60,19 +60,25 @@ variable "node_min_size" {
 variable "node_max_size" {
   description = "Maximum node count"
   type        = number
-  default     = 4
+  default     = 6
 }
 
 variable "node_desired_size" {
   description = "Desired node count"
   type        = number
-  default     = 2
+  default     = 3
 }
 
 variable "node_disk_size" {
   description = "Node disk size in GB"
   type        = number
   default     = 20
+}
+
+variable "iam_admin_username" {
+  description = "IAM username to grant EKS cluster admin access. Leave empty to skip."
+  type        = string
+  default     = ""
 }
 
 variable "tags" {
@@ -82,13 +88,13 @@ variable "tags" {
 }
 
 variable "rds_sg_id" {
-  description = "RDS security group ID to allow MySQL access from EKS nodes"
+  description = "RDS security group ID — EKS managed node SG gets MySQL access to this"
   type        = string
   default     = ""
 }
 
 variable "alb_sg_id" {
-  description = "ALB security group ID to allow traffic to pods"
+  description = "ALB security group ID — allows ALB to reach pods"
   type        = string
   default     = ""
 }

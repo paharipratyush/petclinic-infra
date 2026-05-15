@@ -1,0 +1,47 @@
+# ============================================================
+# Petclinic Platform — Dev Environment Variables
+# ============================================================
+# Copy this file to terraform.tfvars and fill in your values.
+# terraform.tfvars is gitignored — never commit it.
+#
+# Usage:
+#   cp terraform.tfvars.example terraform.tfvars
+#   # Edit terraform.tfvars with your values
+#   terraform init -backend-config=../../config/backend-dev.hcl
+#   terraform plan
+#   terraform apply
+# ============================================================
+
+aws_region          = "ap-south-1"         # Your AWS region
+project             = "petclinic"
+environment         = "dev"
+vpc_cidr            = "10.0.0.0/16"
+public_subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]
+availability_zones  = ["ap-south-1a", "ap-south-1b"]  # Must match your region
+eks_cluster_version = "1.30"
+node_instance_types = ["t4g.medium"]       # ARM Graviton — free trial until Dec 2026
+node_min_size       = 2
+node_max_size       = 6
+node_desired_size   = 3
+rds_instance_class  = "db.t4g.micro"       # Free tier eligible
+domain_name         = "your-domain.com"    # Must exist in Cloudflare
+iam_admin_username  = "your-iam-username"  # IAM user that gets EKS admin access
+
+# ── Cloudflare — required ─────────────────────────────────────────────────────
+# Get zone_id: Cloudflare Dashboard → your domain → Overview → Zone ID (right sidebar)
+# Create API token: Cloudflare Dashboard (https://dash.cloudflare.com/profile/api-tokens) → My Profile → API Tokens
+#   → Create Token → Edit zone DNS → limit to your domain
+cloudflare_zone_id   = "YOUR_CLOUDFLARE_ZONE_ID"
+cloudflare_api_token = "YOUR_CLOUDFLARE_API_TOKEN"
+
+# ── OpenAI — optional ─────────────────────────────────────────────────────────
+# Leave "" to use demo mode (limited, gpt-4o-mini)
+# Set your real key to use gpt-4o
+openai_api_key = ""
+
+# ── Post-apply DNS — filled automatically ────────────────────────────────────
+# Run: ./scripts/update-dns-and-ingress.sh dev
+# This script reads ALB hostnames from kubectl and fills these values,
+# then runs terraform apply to create Cloudflare CNAME records.
+alb_dns_name            = ""
+monitoring_alb_dns_name = ""

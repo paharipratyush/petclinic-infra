@@ -128,37 +128,36 @@ resource "aws_eks_node_group" "main" {
   })
 }
 
-# ── EKS Managed Add-ons ───────────────────────────────────────────────────────
+# ── EKS Managed Add-ons (pinned versions — upgrade deliberately) ──────────────
 resource "aws_eks_addon" "coredns" {
   cluster_name                = aws_eks_cluster.main.name
   addon_name                  = "coredns"
+  addon_version               = "v1.11.4-eksbuild.2"
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "OVERWRITE"
-
-  depends_on = [aws_eks_node_group.main]
-
-  tags = var.tags
+  depends_on                  = [aws_eks_node_group.main]
+  tags                        = var.tags
 }
 
 resource "aws_eks_addon" "kube_proxy" {
   cluster_name                = aws_eks_cluster.main.name
   addon_name                  = "kube-proxy"
+  addon_version               = "v1.30.9-eksbuild.3"
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "OVERWRITE"
-
-  tags = var.tags
+  tags                        = var.tags
 }
 
 resource "aws_eks_addon" "vpc_cni" {
   cluster_name                = aws_eks_cluster.main.name
   addon_name                  = "vpc-cni"
+  addon_version               = "v1.19.5-eksbuild.1"
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "OVERWRITE"
-
-  tags = var.tags
+  tags                        = var.tags
 }
 
-# ── EBS CSI Driver (needed for PersistentVolumes — Prometheus, Grafana, Loki) ─
+# ── EBS CSI Driver — required for PersistentVolumes (Prometheus, Grafana, Loki)
 resource "aws_iam_role" "ebs_csi" {
   name = "${var.project}-${var.environment}-ebs-csi-role"
 
@@ -190,29 +189,30 @@ resource "aws_iam_role_policy_attachment" "ebs_csi_policy" {
 resource "aws_eks_addon" "ebs_csi" {
   cluster_name                = aws_eks_cluster.main.name
   addon_name                  = "aws-ebs-csi-driver"
+  addon_version               = "v1.40.1-eksbuild.1"
   service_account_role_arn    = aws_iam_role.ebs_csi.arn
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "OVERWRITE"
-
-  depends_on = [aws_eks_node_group.main]
-
-  tags = var.tags
+  depends_on                  = [aws_eks_node_group.main]
+  tags                        = var.tags
 }
 
-# ── Access Entry (allows deploying IAM user to access cluster) ────────────────
+# ── Access Entry — grants deploying IAM user cluster admin access ─────────────
+# count = 0 when iam_admin_username is empty (skip for new users who use a role)
 data "aws_caller_identity" "current" {}
 
 resource "aws_eks_access_entry" "admin" {
+  count         = var.iam_admin_username != "" ? 1 : 0
   cluster_name  = aws_eks_cluster.main.name
-  principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/dmi-petclinic-infra-pratyush"
+  principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/${var.iam_admin_username}"
   type          = "STANDARD"
-
-  tags = var.tags
+  tags          = var.tags
 }
 
 resource "aws_eks_access_policy_association" "admin" {
+  count         = var.iam_admin_username != "" ? 1 : 0
   cluster_name  = aws_eks_cluster.main.name
-  principal_arn = aws_eks_access_entry.admin.principal_arn
+  principal_arn = aws_eks_access_entry.admin[0].principal_arn
   policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
 
   access_scope {
@@ -248,8 +248,7 @@ resource "aws_iam_policy" "lb_controller" {
   name        = "${var.project}-${var.environment}-lb-controller-policy"
   description = "IAM policy for AWS Load Balancer Controller"
   policy      = file("${path.module}/lb-controller-policy.json")
-
-  tags = var.tags
+  tags        = var.tags
 }
 
 resource "aws_iam_role_policy_attachment" "lb_controller" {
@@ -257,10 +256,8 @@ resource "aws_iam_role_policy_attachment" "lb_controller" {
   policy_arn = aws_iam_policy.lb_controller.arn
 }
 
-
-# ── Allow EKS cluster managed SG to reach RDS ────────────────────────────────
-# EKS creates its own managed SG for nodes. We add a rule to allow it to
-# reach RDS. This avoids circular dependency between VPC and EKS modules.
+# ── Allow EKS managed SG to reach RDS ────────────────────────────────────────
+# EKS creates its own managed SG. We allow it to reach RDS on 3306.
 resource "aws_security_group_rule" "rds_from_eks_managed_sg" {
   type                     = "ingress"
   from_port                = 3306
@@ -271,7 +268,6 @@ resource "aws_security_group_rule" "rds_from_eks_managed_sg" {
   description              = "Allow EKS managed node SG to reach RDS"
 }
 
-
 # ── Allow ALB to reach pods directly (target-type: ip) ───────────────────────
 resource "aws_security_group_rule" "pods_from_alb" {
   type                     = "ingress"
@@ -280,5 +276,5 @@ resource "aws_security_group_rule" "pods_from_alb" {
   protocol                 = "tcp"
   security_group_id        = aws_eks_cluster.main.vpc_config[0].cluster_security_group_id
   source_security_group_id = var.alb_sg_id
-  description              = "Allow ALB to reach pods on application ports"
+  description              = "Allow ALB to reach pods on application ports (3000-9090)"
 }

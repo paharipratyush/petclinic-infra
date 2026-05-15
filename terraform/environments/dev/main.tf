@@ -26,9 +26,9 @@ module "eks" {
   node_max_size       = var.node_max_size
   node_desired_size   = var.node_desired_size
   rds_sg_id           = module.vpc.rds_sg_id
-  alb_sg_id = module.vpc.alb_sg_id
+  alb_sg_id           = module.vpc.alb_sg_id
+  iam_admin_username  = var.iam_admin_username
 }
-
 
 # ── ECR ───────────────────────────────────────────────────────────────────────
 module "ecr" {
@@ -38,7 +38,6 @@ module "ecr" {
   environment          = var.environment
   image_tag_mutability = "MUTABLE"
 }
-
 
 # ── RDS ───────────────────────────────────────────────────────────────────────
 module "rds" {
@@ -55,7 +54,6 @@ module "rds" {
   deletion_protection     = false
 }
 
-
 # ── Secrets (non-RDS) ─────────────────────────────────────────────────────────
 module "secrets" {
   source = "../../modules/secrets"
@@ -67,8 +65,7 @@ module "secrets" {
   oidc_provider_url = module.eks.oidc_provider_url
 }
 
-
-# ── DNS + ACM ─────────────────────────────────────────────────────────────────
+# ── DNS + ACM (Cloudflare) ────────────────────────────────────────────────────
 module "dns" {
   source = "../../modules/dns"
 

@@ -8,27 +8,7 @@ server:
     scrape_interval: 15s
     evaluation_interval: 15s
 
-# Disable components we don't need
-alertmanager:
-  enabled: false  # We'll install separately
-
-pushgateway:
-  enabled: false
-
-nodeExporter:
-  enabled: true
-
-# Custom scrape configs for petclinic services
-server:
-  persistentVolume:
-    enabled: true
-    size: 10Gi
-    storageClass: gp2
-  retention: "7d"
-  global:
-    scrape_interval: 15s
-    evaluation_interval: 15s
-
+# Only install what we need — alertmanager is deployed separately
 alertmanager:
   enabled: false
 
@@ -38,6 +18,8 @@ pushgateway:
 nodeExporter:
   enabled: true
 
+# Scrape only the 5 services that have micrometer-registry-prometheus
+# DO NOT add config-server, discovery-server, or admin-server — they return 404
 extraScrapeConfigs: |
   - job_name: api-gateway
     metrics_path: /actuator/prometheus

@@ -14,4 +14,7 @@ env:
 initContainers:
   - name: wait-for-config-server
     image: busybox:1.36
-    command: ['sh', '-c', 'until wget -qO- http://config-server:8888/actuator/health; do echo waiting for config-server; sleep 5; done']
+    command:
+      - sh
+      - -c
+      - 'until wget -qO- http://config-server:8888/actuator/health; do echo "waiting for config-server..."; sleep 5; done'
