@@ -8,7 +8,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/paharipratyush/petclinic-infra.git
+    repoURL: INFRA_REPO_URL_PLACEHOLDER
     targetRevision: main
     path: helm/petclinic-service
     helm:
