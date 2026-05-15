@@ -44,6 +44,11 @@ resource "aws_eks_cluster" "main" {
   ]
 
   tags = var.tags
+
+  lifecycle {
+    prevent_destroy = true
+    ignore_changes  = [version]
+  }
 }
 
 # ── OIDC Provider (for IRSA) ──────────────────────────────────────────────────
