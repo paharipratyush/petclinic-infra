@@ -9,8 +9,6 @@ spec:
   project: default
   source:
     repoURL: INFRA_REPO_URL_PLACEHOLDER
-               sed -i 's|repoURL: INFRA_REPO_URL_PLACEHOLDER
-             done
     targetRevision: main
     path: helm/petclinic-service
     helm:
