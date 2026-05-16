@@ -73,6 +73,7 @@ cd "${REPO_ROOT}/${TF_DIR}"
 
 JDBC_URL=$(terraform output -raw rds_jdbc_url 2>/dev/null || echo "")
 CERT_ARN=$(terraform output -raw certificate_arn 2>/dev/null || echo "")
+ESO_ROLE_ARN=$(terraform output -raw eso_role_arn 2>/dev/null || echo "")
 
 cd "${REPO_ROOT}"
 
