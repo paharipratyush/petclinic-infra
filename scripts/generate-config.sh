@@ -234,3 +234,13 @@ echo "  git add helm-values/ k8s/ monitoring/ argocd/"
 echo "  git commit -m 'config: update dynamic values for ${ENV}'"
 echo "  git push"
 echo ""
+
+# ── Update ESO ServiceAccount annotation with current ESO role ARN ────────────
+if [ -n "${ESO_ROLE_ARN:-}" ]; then
+  ESO_SA="${REPO_ROOT}/k8s/base/external-secrets/serviceaccount.yaml"
+  if [ -f "${ESO_SA}" ]; then
+    yq -i ".metadata.annotations[\"eks.amazonaws.com/role-arn\"] = \"${ESO_ROLE_ARN}\"" \
+      "${ESO_SA}"
+    echo "   ✅ k8s/base/external-secrets/serviceaccount.yaml → ${ESO_ROLE_ARN}"
+  fi
+fi

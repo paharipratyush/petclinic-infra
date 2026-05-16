@@ -20,10 +20,14 @@ resource "aws_acm_certificate" "wildcard" {
 }
 
 # ── ACM validation records in Cloudflare ─────────────────────────────────────
+# Key by resource_record_name (not domain_name) to deduplicate:
+# ACM returns the same CNAME for both praty.dev and *.praty.dev
+# Using domain_name as key creates two resources pointing to the same record ID
+# which causes "Record does not exist" error on destroy
 resource "cloudflare_record" "acm_validation" {
   for_each = {
     for dvo in aws_acm_certificate.wildcard.domain_validation_options :
-    dvo.domain_name => {
+    dvo.resource_record_name => {
       name  = trimsuffix(dvo.resource_record_name, ".${var.domain_name}.")
       value = trimsuffix(dvo.resource_record_value, ".")
       type  = dvo.resource_record_type
@@ -42,13 +46,10 @@ resource "cloudflare_record" "acm_validation" {
 # ── Wait for ACM certificate validation ───────────────────────────────────────
 resource "aws_acm_certificate_validation" "wildcard" {
   certificate_arn = aws_acm_certificate.wildcard.arn
-
-  # Validation records are in Cloudflare — just wait for ACM to confirm
-  depends_on = [cloudflare_record.acm_validation]
+  depends_on      = [cloudflare_record.acm_validation]
 }
 
 # ── Application DNS records in Cloudflare ────────────────────────────────────
-# These are created only after the ALB exists (alb_dns_name is provided)
 resource "cloudflare_record" "app" {
   count = var.alb_dns_name != "" ? 1 : 0
 

@@ -1,3 +1,11 @@
+locals {
+  tags = {
+    Project     = var.project
+    Environment = var.environment
+    ManagedBy   = "terraform"
+  }
+}
+
 # ── VPC ───────────────────────────────────────────────────────────────────────
 module "vpc" {
   source = "../../modules/vpc"
@@ -7,6 +15,7 @@ module "vpc" {
   vpc_cidr            = var.vpc_cidr
   public_subnet_cidrs = var.public_subnet_cidrs
   availability_zones  = var.availability_zones
+  tags                = local.tags
 }
 
 # ── EKS ───────────────────────────────────────────────────────────────────────
@@ -28,6 +37,7 @@ module "eks" {
   rds_sg_id           = module.vpc.rds_sg_id
   alb_sg_id           = module.vpc.alb_sg_id
   iam_admin_username  = var.iam_admin_username
+  tags                = local.tags
 }
 
 # ── ECR ───────────────────────────────────────────────────────────────────────
@@ -37,6 +47,7 @@ module "ecr" {
   project              = var.project
   environment          = var.environment
   image_tag_mutability = "MUTABLE"
+  tags                 = local.tags
 }
 
 # ── RDS ───────────────────────────────────────────────────────────────────────
@@ -52,6 +63,7 @@ module "rds" {
   backup_retention_period = 7
   skip_final_snapshot     = true
   deletion_protection     = false
+  tags                    = local.tags
 }
 
 # ── Secrets (non-RDS) ─────────────────────────────────────────────────────────
@@ -63,6 +75,7 @@ module "secrets" {
   openai_api_key    = var.openai_api_key
   oidc_provider_arn = module.eks.oidc_provider_arn
   oidc_provider_url = module.eks.oidc_provider_url
+  tags              = local.tags
 }
 
 # ── DNS + ACM (Cloudflare) ────────────────────────────────────────────────────
@@ -75,14 +88,16 @@ module "dns" {
   cloudflare_zone_id      = var.cloudflare_zone_id
   alb_dns_name            = var.alb_dns_name
   monitoring_alb_dns_name = var.monitoring_alb_dns_name
+  tags                    = local.tags
 }
 
 # ── GitHub OIDC ───────────────────────────────────────────────────────────────
-# ── GitHub OIDC ───────────────────────────────────────────────────────────────
 module "github_oidc" {
-  source     = "../../modules/github-oidc"
-  project    = var.project
-  aws_region = var.aws_region
-  github_org = var.github_org
-  app_repo   = var.app_repo
+  source      = "../../modules/github-oidc"
+  project     = var.project
+  environment = var.environment
+  aws_region  = var.aws_region
+  github_org  = var.github_org
+  app_repo    = var.app_repo
+  tags        = local.tags
 }

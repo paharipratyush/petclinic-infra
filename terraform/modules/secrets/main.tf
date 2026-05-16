@@ -1,7 +1,8 @@
 # ── OpenAI API Key ────────────────────────────────────────────────────────────
 # Note: RDS credentials are managed by the RDS module, not here.
 resource "aws_secretsmanager_secret" "openai" {
-  name        = "petclinic/${var.environment}/openai-api-key"
+  name                    = "petclinic/${var.environment}/openai-api-key"
+  recovery_window_in_days = 0
   description = "OpenAI API key for GenAI service in ${var.project}-${var.environment}"
 
   tags = merge(var.tags, {

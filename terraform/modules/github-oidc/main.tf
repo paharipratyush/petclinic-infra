@@ -54,7 +54,7 @@ resource "aws_iam_policy" "github_actions_ecr" {
           "ecr:DescribeRepositories",
           "ecr:ListImages"
         ]
-        Resource = "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/petclinic-dev/*"
+        Resource = "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/${var.project}-${var.environment}/*"
       }
     ]
   })

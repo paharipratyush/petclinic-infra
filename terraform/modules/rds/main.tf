@@ -69,7 +69,8 @@ resource "aws_db_instance" "main" {
 
 # ── Secrets Manager — RDS credentials ────────────────────────────────────────
 resource "aws_secretsmanager_secret" "rds" {
-  name        = "petclinic/${var.environment}/rds-credentials"
+  name                    = "petclinic/${var.environment}/rds-credentials"
+  recovery_window_in_days = 0
   description = "RDS MySQL credentials for ${var.project}-${var.environment}"
 
   tags = merge(var.tags, {
