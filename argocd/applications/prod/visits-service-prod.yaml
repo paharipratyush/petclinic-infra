@@ -1,3 +1,7 @@
+# IMPORTANT: repoURL below is a placeholder.
+# Run ./scripts/generate-config.sh prod before applying this file.
+# The script will replace the placeholder with your actual GitHub repo URL.
+
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -22,3 +26,4 @@ spec:
   syncPolicy:
     syncOptions:
       - CreateNamespace=false
+      - PruneLast=true
