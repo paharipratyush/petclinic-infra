@@ -1,7 +1,29 @@
 data "aws_caller_identity" "current" {}
 
-resource "aws_iam_openid_connect_provider" "github" {
+# ── GitHub OIDC Provider ──────────────────────────────────────────────────────
+# The GitHub OIDC provider is account-level (not per-environment).
+# We try to look it up first — if it exists (created by another env apply),
+# we use it. If it doesn't exist, we create it.
+# This makes the module safe to apply for both dev and prod.
+
+data "aws_iam_openid_connect_provider" "github_existing" {
+  # This will succeed if the provider already exists, fail if not
   url = "https://token.actions.githubusercontent.com"
+}
+
+locals {
+  # Use existing provider ARN if found, otherwise use the one we create
+  github_oidc_provider_arn = try(
+    data.aws_iam_openid_connect_provider.github_existing.arn,
+    aws_iam_openid_connect_provider.github[0].arn
+  )
+}
+
+resource "aws_iam_openid_connect_provider" "github" {
+  # Only create if it doesn't already exist
+  count = try(data.aws_iam_openid_connect_provider.github_existing.arn, "") != "" ? 0 : 1
+
+  url            = "https://token.actions.githubusercontent.com"
   client_id_list = ["sts.amazonaws.com"]
   thumbprint_list = [
     "6938fd4d98bab03faadb97b34396831e3780aea1",
@@ -9,28 +31,30 @@ resource "aws_iam_openid_connect_provider" "github" {
   ]
 }
 
+# ── GitHub Actions IAM Role ───────────────────────────────────────────────────
 resource "aws_iam_role" "github_actions" {
   name = "${var.project}-github-actions-role"
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
       Effect = "Allow"
       Principal = {
-        Federated = aws_iam_openid_connect_provider.github.arn
+        Federated = local.github_oidc_provider_arn
       }
       Action = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringEquals = {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-        }
-        StringLike = {
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_org}/${var.app_repo}:*"
+          # Restricted to main branch of app repo only
+          "token.actions.githubusercontent.com:sub" = "repo:${var.github_org}/${var.app_repo}:ref:refs/heads/main"
         }
       }
     }]
   })
 }
 
+# ── ECR Push Policy ───────────────────────────────────────────────────────────
 resource "aws_iam_policy" "github_actions_ecr" {
   name = "${var.project}-github-actions-ecr-policy"
   policy = jsonencode({

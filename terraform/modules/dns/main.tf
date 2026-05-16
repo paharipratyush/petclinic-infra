@@ -1,8 +1,4 @@
-# ── Look up existing Route 53 hosted zone (for ACM validation) ────────────────
-data "aws_route53_zone" "main" {
-  name         = var.domain_name
-  private_zone = false
-}
+
 
 # ── ACM Wildcard Certificate ──────────────────────────────────────────────────
 resource "aws_acm_certificate" "wildcard" {
@@ -89,6 +85,17 @@ resource "cloudflare_record" "admin" {
   zone_id = var.cloudflare_zone_id
   name    = var.environment == "prod" ? "admin" : "admin-dev"
   content = var.alb_dns_name
+  type    = "CNAME"
+  ttl     = 1
+  proxied = false
+}
+
+resource "cloudflare_record" "zipkin" {
+  count = var.monitoring_alb_dns_name != "" ? 1 : 0
+
+  zone_id = var.cloudflare_zone_id
+  name    = var.environment == "prod" ? "zipkin" : "zipkin-dev"
+  content = var.monitoring_alb_dns_name
   type    = "CNAME"
   ttl     = 1
   proxied = false

@@ -209,6 +209,6 @@ resource "aws_security_group_rule" "alb_egress_pods" {
   to_port           = 9090
   protocol          = "tcp"
   security_group_id = aws_security_group.alb.id
-  cidr_blocks       = ["10.0.0.0/16"]
+  cidr_blocks       = [var.vpc_cidr]
   description       = "Allow ALB to reach pods directly (target-type: ip)"
 }

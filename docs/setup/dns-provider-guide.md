@@ -31,14 +31,16 @@ cloudflare_api_token = "your-api-token-here"
 ### Subdomains created automatically
 | Subdomain | Purpose |
 |-----------|---------|
-| `petclinic-dev.praty.dev` | Application (dev) |
-| `grafana-dev.praty.dev` | Grafana (dev) |
-| `argocd-dev.praty.dev` | ArgoCD (dev) |
-| `admin-dev.praty.dev` | Spring Boot Admin (dev) |
-| `petclinic.praty.dev` | Application (prod) |
-| `grafana.praty.dev` | Grafana (prod) |
-| `argocd.praty.dev` | ArgoCD (prod) |
-| `admin.praty.dev` | Spring Boot Admin (prod) |
+| `petclinic-dev.your-domain.com` | Application (dev) |
+| `grafana-dev.your-domain.com` | Grafana (dev) |
+| `argocd-dev.your-domain.com` | ArgoCD (dev) |
+| `admin-dev.your-domain.com` | Spring Boot Admin (dev) |
+| `zipkin-dev.your-domain.com` | Zipkin distributed tracing (dev) |
+| `petclinic.your-domain.com` | Application (prod) |
+| `grafana.your-domain.com` | Grafana (prod) |
+| `argocd.your-domain.com` | ArgoCD (prod) |
+| `admin.your-domain.com` | Spring Boot Admin (prod) |
+| `zipkin.your-domain.com` | Zipkin distributed tracing (prod) |
 
 ---
 
@@ -206,6 +208,6 @@ module "dns" {
 ### Step 7: Reinitialize and apply
 ```bash
 rm .terraform.lock.hcl
-terraform init -backend-config=../../config/backend-dev.hcl
+terraform init -backend-config=../../../config/backend-dev.hcl
 terraform apply -auto-approve
 ```

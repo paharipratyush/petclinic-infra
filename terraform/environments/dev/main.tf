@@ -99,5 +99,4 @@ module "github_oidc" {
   aws_region  = var.aws_region
   github_org  = var.github_org
   app_repo    = var.app_repo
-  tags        = local.tags
 }
