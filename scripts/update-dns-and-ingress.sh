@@ -5,7 +5,9 @@
 # Run this AFTER all ingresses are created and ALBs are provisioned:
 #   1. Gets ALB hostnames from kubectl
 #   2. Updates terraform.tfvars with ALB hostnames
-#   3. Runs terraform apply to create Cloudflare CNAME records
+#   3. Reads domain from terraform.tfvars
+#   4. Runs terraform apply to create Cloudflare CNAME records
+#   5. Prints the live URLs
 #
 # Usage:
 #   ./scripts/update-dns-and-ingress.sh          # defaults to dev
@@ -20,14 +22,31 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
 ENV="${1:-dev}"
-TF_DIR="terraform/environments/${ENV}"
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TFVARS="${REPO_ROOT}/${TF_DIR}/terraform.tfvars"
+TF_DIR="${REPO_ROOT}/terraform/environments/${ENV}"
+TFVARS="${TF_DIR}/terraform.tfvars"
 
 echo "=============================================="
 echo " update-dns-and-ingress.sh — env: ${ENV}"
 echo "=============================================="
+
+# ── Verify tfvars exists ──────────────────────────────────────────────────────
+if [ ! -f "${TFVARS}" ]; then
+  echo "   ❌ ERROR: ${TFVARS} not found."
+  echo "   Copy terraform.tfvars.example to terraform.tfvars and fill in your values."
+  exit 1
+fi
+
+# ── Read domain from tfvars ───────────────────────────────────────────────────
+DOMAIN=$(grep "^domain_name" "${TFVARS}" | sed 's/.*=\s*//' | tr -d '"' | tr -d "'" | tr -d ' ')
+if [ -z "${DOMAIN}" ]; then
+  echo "   ⚠️  WARNING: domain_name not found in ${TFVARS} — URLs will be incomplete"
+  DOMAIN="your-domain.com"
+fi
+echo " Domain: ${DOMAIN}"
 
 # ── Wait for and get App ALB hostname ────────────────────────────────────────
 echo ""
@@ -78,17 +97,9 @@ fi
 echo ""
 echo "[3/3] Updating terraform.tfvars..."
 
-if [ ! -f "${TFVARS}" ]; then
-  echo "   ❌ ERROR: ${TFVARS} not found."
-  echo "   Copy terraform.tfvars.example to terraform.tfvars and fill in your values."
-  exit 1
-fi
-
-# Update alb_dns_name
 sed -i "s|^alb_dns_name.*=.*|alb_dns_name            = \"${APP_ALB}\"|" "${TFVARS}"
 echo "   ✅ Updated alb_dns_name = ${APP_ALB}"
 
-# Update monitoring_alb_dns_name
 if [ -n "${MONITORING_ALB}" ]; then
   sed -i "s|^monitoring_alb_dns_name.*=.*|monitoring_alb_dns_name = \"${MONITORING_ALB}\"|" "${TFVARS}"
   echo "   ✅ Updated monitoring_alb_dns_name = ${MONITORING_ALB}"
@@ -97,31 +108,34 @@ fi
 # ── Run terraform apply ───────────────────────────────────────────────────────
 echo ""
 echo "Running terraform apply to create Cloudflare CNAME records..."
-echo "This creates DNS records pointing your domains to the ALBs."
 echo ""
 
-cd "${REPO_ROOT}/${TF_DIR}"
+cd "${TF_DIR}"
 terraform apply \
   -target=module.dns.cloudflare_record.app \
   -target=module.dns.cloudflare_record.grafana \
   -target=module.dns.cloudflare_record.argocd \
   -target=module.dns.cloudflare_record.admin \
+  -target=module.dns.cloudflare_record.zipkin \
   -auto-approve
 
+# ── Print live URLs ───────────────────────────────────────────────────────────
 echo ""
 echo "=============================================="
-echo " DNS records created! Your domains:"
+echo " DNS records created! Your live URLs:"
 echo "=============================================="
 if [ "${ENV}" = "prod" ]; then
-  echo "   https://petclinic.praty.dev"
-  echo "   https://grafana.praty.dev"
-  echo "   https://argocd.praty.dev"
-  echo "   https://admin.praty.dev"
+  echo "   https://petclinic.${DOMAIN}"
+  echo "   https://grafana.${DOMAIN}"
+  echo "   https://argocd.${DOMAIN}"
+  echo "   https://admin.${DOMAIN}"
+  echo "   https://zipkin.${DOMAIN}"
 else
-  echo "   https://petclinic-dev.praty.dev"
-  echo "   https://grafana-dev.praty.dev"
-  echo "   https://argocd-dev.praty.dev"
-  echo "   https://admin-dev.praty.dev"
+  echo "   https://petclinic-dev.${DOMAIN}"
+  echo "   https://grafana-dev.${DOMAIN}"
+  echo "   https://argocd-dev.${DOMAIN}"
+  echo "   https://admin-dev.${DOMAIN}"
+  echo "   https://zipkin-dev.${DOMAIN}"
 fi
 echo ""
 echo " DNS propagation may take 1-5 minutes."
