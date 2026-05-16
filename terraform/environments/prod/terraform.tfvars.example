@@ -7,7 +7,7 @@
 # Usage:
 #   cp terraform.tfvars.example terraform.tfvars
 #   # Edit terraform.tfvars with your values
-#   terraform init -backend-config=../../../config/backend-dev.hcl
+#   # terraform init -backend-config=../../../config/backend-prod.hcl
 #   terraform plan
 #   terraform apply
 # ============================================================
