@@ -4,14 +4,12 @@ image:
   tag: v1.0.0
 service:
   port: 8081
-# HA in prod — 2 replicas minimum
 replicaCount: 2
 env:
   - name: SPRING_PROFILES_ACTIVE
     value: "docker,mysql"
   - name: CONFIG_SERVER_URL
     value: "http://config-server:8888"
-  # Filled automatically by scripts/generate-config.sh after terraform apply
   - name: SPRING_DATASOURCE_URL
     value: "jdbc:mysql://petclinic-dev-mysql.cbsumcwgg4sm.ap-south-1.rds.amazonaws.com:3306/petclinic"
   - name: SPRING_DATASOURCE_USERNAME
@@ -25,6 +23,8 @@ env:
         name: rds-credentials
         key: password
   - name: MANAGEMENT_ZIPKIN_TRACING_ENDPOINT
+    value: "http://zipkin.tracing:9411/api/v2/spans"
+  - name: MANAGEMENT_TRACING_EXPORT_ZIPKIN_ENDPOINT
     value: "http://zipkin.tracing:9411/api/v2/spans"
   - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
     value: "1.0"

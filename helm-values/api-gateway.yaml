@@ -4,7 +4,6 @@ image:
   tag: v1.0.0
 service:
   port: 8080
-# API Gateway handles all external traffic — higher CPU limit
 resources:
   requests:
     cpu: 200m
@@ -12,7 +11,6 @@ resources:
   limits:
     cpu: 1000m
     memory: 512Mi
-# HA in prod — 2 replicas minimum
 replicaCount: 2
 env:
   - name: SPRING_PROFILES_ACTIVE
@@ -20,6 +18,8 @@ env:
   - name: CONFIG_SERVER_URL
     value: "http://config-server:8888"
   - name: MANAGEMENT_ZIPKIN_TRACING_ENDPOINT
+    value: "http://zipkin.tracing:9411/api/v2/spans"
+  - name: MANAGEMENT_TRACING_EXPORT_ZIPKIN_ENDPOINT
     value: "http://zipkin.tracing:9411/api/v2/spans"
   - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
     value: "1.0"
