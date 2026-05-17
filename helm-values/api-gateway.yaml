@@ -1,5 +1,6 @@
 image:
-  repository: 482352877891.dkr.ecr.ap-south-1.amazonaws.com/petclinic-dev/api-gateway
+  # Filled automatically by scripts/generate-config.sh after terraform apply
+  repository: PLACEHOLDER_ECR_REGISTRY/petclinic-dev/api-gateway
   tag: v1.0.0
 service:
   port: 8080
@@ -11,12 +12,13 @@ resources:
   limits:
     cpu: 1000m
     memory: 512Mi
+# HA in prod — 2 replicas minimum
+replicaCount: 2
 env:
   - name: SPRING_PROFILES_ACTIVE
     value: "docker"
   - name: CONFIG_SERVER_URL
     value: "http://config-server:8888"
-  # Distributed tracing — send 100% of requests to Zipkin
   - name: MANAGEMENT_ZIPKIN_TRACING_ENDPOINT
     value: "http://zipkin.tracing:9411/api/v2/spans"
   - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY

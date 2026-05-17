@@ -13,7 +13,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "petclinic-service.selectorLabels" . | nindent 8 }}
+        {{- include "petclinic-service.labels" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "petclinic-service.name" . }}
       securityContext:
@@ -52,11 +52,17 @@ spec:
             failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          {{- if or .Values.configData .Values.envFrom }}
+          envFrom:
+            {{- if .Values.configData }}
+            - configMapRef:
+                name: {{ include "petclinic-service.name" . }}-config
+            {{- end }}
+            {{- if .Values.envFrom }}
+            {{- toYaml .Values.envFrom | nindent 12 }}
+            {{- end }}
+          {{- end }}
           {{- if .Values.env }}
           env:
             {{- toYaml .Values.env | nindent 12 }}
-          {{- end }}
-          {{- if .Values.envFrom }}
-          envFrom:
-            {{- toYaml .Values.envFrom | nindent 12 }}
           {{- end }}

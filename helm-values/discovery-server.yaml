@@ -1,8 +1,10 @@
 image:
-  repository: 482352877891.dkr.ecr.ap-south-1.amazonaws.com/petclinic-dev/discovery-server
+  repository: PLACEHOLDER_ECR_REGISTRY/petclinic-dev/discovery-server
   tag: v1.0.0
 service:
   port: 8761
+# HA in prod — discovery-server must be highly available as all services depend on it
+replicaCount: 2
 env:
   - name: SPRING_PROFILES_ACTIVE
     value: "docker"

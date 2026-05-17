@@ -1,5 +1,8 @@
 # Prod environment overrides — applied on top of per-service values
-replicaCount: 2
+# NOTE: replicaCount is NOT set here — it is set per-service in helm-values/{service}.yaml
+# Services that need HA (replicaCount: 2): config-server, discovery-server, api-gateway,
+#   customers-service, visits-service, vets-service
+# Services that stay at 1: genai-service (cost), admin-server (monitoring)
 
 autoscaling:
   enabled: true

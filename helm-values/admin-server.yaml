@@ -1,8 +1,11 @@
 image:
-  repository: 482352877891.dkr.ecr.ap-south-1.amazonaws.com/petclinic-dev/admin-server
+  # Filled automatically by scripts/generate-config.sh after terraform apply
+  repository: PLACEHOLDER_ECR_REGISTRY/petclinic-dev/admin-server
   tag: v1.0.0
 service:
   port: 9090
+# admin-server stays at 1 replica in prod — monitoring tool, single replica sufficient
+replicaCount: 1
 env:
   - name: SPRING_PROFILES_ACTIVE
     value: "docker"

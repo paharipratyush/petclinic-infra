@@ -1,11 +1,16 @@
 # Default values — overridden by per-service and per-environment values files
+# Values merge order: values.yaml < helm-values/{service}.yaml < helm-values/{env}.yaml
 
 replicaCount: 1
+
+component: service
 
 image:
   repository: ""
   tag: "v1.0.0"
-  pullPolicy: IfNotPresent
+  # Always pull — ensures new images are fetched even if tag hasn't changed.
+  # Critical for dev (MUTABLE ECR tags) where same tag may be re-pushed.
+  pullPolicy: Always
 
 service:
   port: 8080
@@ -37,6 +42,13 @@ env: []
 envFrom: []
 initContainers: []
 
+# configData: optional ConfigMap data for non-secret configuration
+# When set, a ConfigMap named {service}-config is created and mounted via envFrom
+# configData:
+#   SPRING_DATASOURCE_URL: "jdbc:mysql://..."
+#   CONFIG_SERVER_URL: "http://config-server:8888"
+configData: {}
+
 securityContext:
   runAsNonRoot: true
   runAsUser: 1000
@@ -46,6 +58,11 @@ containerSecurityContext:
   allowPrivilegeEscalation: false
   capabilities:
     drop: ["ALL"]
+  # readOnlyRootFilesystem is intentionally false:
+  # Spring Boot requires write access to /tmp for:
+  #   - Undertow/Tomcat temp file uploads
+  #   - Spring Boot LayerTools extraction cache
+  # Setting this to true would crash the JVM on startup.
   readOnlyRootFilesystem: false
 
 autoscaling:

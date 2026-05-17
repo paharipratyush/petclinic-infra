@@ -1,0 +1,11 @@
+{{- if .Values.configData }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "petclinic-service.name" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "petclinic-service.labels" . | nindent 4 }}
+data:
+  {{- toYaml .Values.configData | nindent 2 }}
+{{- end }}

@@ -1,21 +1,22 @@
 image:
-  repository: 482352877891.dkr.ecr.ap-south-1.amazonaws.com/petclinic-dev/genai-service
+  # Filled automatically by scripts/generate-config.sh after terraform apply
+  repository: PLACEHOLDER_ECR_REGISTRY/petclinic-dev/genai-service
   tag: v1.0.0
 service:
   port: 8084
+# genai-service stays at 1 replica in prod — lower priority, cost saving
+replicaCount: 1
 env:
   - name: SPRING_PROFILES_ACTIVE
     # production is default for genai-service per application.yml
     value: "docker,production"
   - name: CONFIG_SERVER_URL
     value: "http://config-server:8888"
-  # OpenAI API key — synced from AWS Secrets Manager via External Secrets Operator
   - name: OPENAI_API_KEY
     valueFrom:
       secretKeyRef:
         name: openai-api-key
         key: OPENAI_API_KEY
-  # Distributed tracing
   - name: MANAGEMENT_ZIPKIN_TRACING_ENDPOINT
     value: "http://zipkin.tracing:9411/api/v2/spans"
   - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY

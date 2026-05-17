@@ -1,17 +1,21 @@
 image:
-  repository: 482352877891.dkr.ecr.ap-south-1.amazonaws.com/petclinic-dev/vets-service
+  # Filled automatically by scripts/generate-config.sh after terraform apply
+  repository: PLACEHOLDER_ECR_REGISTRY/petclinic-dev/vets-service
   tag: v1.0.0
 service:
   port: 8083
+# HA in prod — 2 replicas minimum
+replicaCount: 2
 env:
   - name: SPRING_PROFILES_ACTIVE
-    # production profile is REQUIRED for Caffeine cache (CacheConfig is gated on @Profile("production"))
+    # production profile is REQUIRED for Caffeine cache
+    # CacheConfig is gated on @Profile("production") — cache only works with this profile
     value: "docker,mysql,production"
   - name: CONFIG_SERVER_URL
     value: "http://config-server:8888"
-  # Updated by scripts/generate-config.sh after terraform apply
+  # Filled automatically by scripts/generate-config.sh after terraform apply
   - name: SPRING_DATASOURCE_URL
-    value: "jdbc:mysql://petclinic-dev-mysql.cbsumcwgg4sm.ap-south-1.rds.amazonaws.com:3306/petclinic"
+    value: "PLACEHOLDER_JDBC_URL"
   - name: SPRING_DATASOURCE_USERNAME
     valueFrom:
       secretKeyRef:
@@ -22,7 +26,6 @@ env:
       secretKeyRef:
         name: rds-credentials
         key: password
-  # Distributed tracing
   - name: MANAGEMENT_ZIPKIN_TRACING_ENDPOINT
     value: "http://zipkin.tracing:9411/api/v2/spans"
   - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
