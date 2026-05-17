@@ -65,7 +65,7 @@ serverFiles:
 
           # Alert 4: Pod restart loop — >3 restarts in 15 minutes
           - alert: PodRestartLoop
-            expr: increase(kube_pod_container_status_restarts_total{namespace=~"petclinic-PLACEHOLDER_K8S_ENV"}[15m]) > 3
+            expr: increase(kube_pod_container_status_restarts_total{namespace=~"petclinic-dev"}[15m]) > 3
             for: 0m
             labels:
               severity: critical
@@ -76,9 +76,9 @@ serverFiles:
           # Alert 5: High memory usage — >80% of container limit for 5 minutes
           - alert: HighMemoryUsage
             expr: |
-              container_memory_working_set_bytes{namespace=~"petclinic-PLACEHOLDER_K8S_ENV",container!=""}
+              container_memory_working_set_bytes{namespace=~"petclinic-dev",container!=""}
               /
-              container_spec_memory_limit_bytes{namespace=~"petclinic-PLACEHOLDER_K8S_ENV",container!=""}
+              container_spec_memory_limit_bytes{namespace=~"petclinic-dev",container!=""}
               > 0.8
             for: 5m
             labels:
@@ -100,25 +100,25 @@ serverFiles:
 # Scrape only the 5 services that have micrometer-registry-prometheus
 # DO NOT add config-server, discovery-server, or admin-server
 # They do not have the prometheus dependency and will return 404
-# Namespace is updated by scripts/generate-config.sh (replaces PLACEHOLDER_K8S_NAMESPACE)
+# Namespace is updated by scripts/generate-config.sh (replaces petclinic-dev)
 extraScrapeConfigs: |
   - job_name: api-gateway
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['api-gateway.PLACEHOLDER_K8S_NAMESPACE:8080']
+      - targets: ['api-gateway.petclinic-dev:8080']
   - job_name: customers-service
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['customers-service.PLACEHOLDER_K8S_NAMESPACE:8081']
+      - targets: ['customers-service.petclinic-dev:8081']
   - job_name: visits-service
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['visits-service.PLACEHOLDER_K8S_NAMESPACE:8082']
+      - targets: ['visits-service.petclinic-dev:8082']
   - job_name: vets-service
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['vets-service.PLACEHOLDER_K8S_NAMESPACE:8083']
+      - targets: ['vets-service.petclinic-dev:8083']
   - job_name: genai-service
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['genai-service.PLACEHOLDER_K8S_NAMESPACE:8084']
+      - targets: ['genai-service.petclinic-dev:8084']

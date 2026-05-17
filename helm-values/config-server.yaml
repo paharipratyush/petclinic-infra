@@ -1,5 +1,5 @@
 image:
-  repository: PLACEHOLDER_ECR_REGISTRY/petclinic-dev/config-server
+  repository: 482352877891.dkr.ecr.ap-south-1.amazonaws.com/petclinic-dev/config-server
   tag: v1.0.0
 service:
   port: 8888

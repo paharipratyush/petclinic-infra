@@ -5,18 +5,15 @@ admin:
   existingSecret: grafana-admin
   userKey: admin-user
   passwordKey: admin-password
-
 persistence:
   enabled: true
   size: 5Gi
   storageClassName: gp2
-
 # root_url is updated by scripts/generate-config.sh
 # Format: https://grafana-{env}.{domain} or https://grafana.{domain}
 grafana.ini:
   server:
-    root_url: https://PLACEHOLDER_GRAFANA_HOST
-
+    root_url: https://grafana-dev.praty.dev
 datasources:
   datasources.yaml:
     apiVersion: 1
@@ -32,7 +29,6 @@ datasources:
         uid: loki
         url: http://loki.monitoring:3100
         access: proxy
-
 dashboardProviders:
   dashboardproviders.yaml:
     apiVersion: 1
@@ -44,7 +40,6 @@ dashboardProviders:
         disableDeletion: false
         options:
           path: /var/lib/grafana/dashboards/default
-
 dashboards:
   default:
     # Community dashboards
@@ -56,7 +51,6 @@ dashboards:
       gnetId: 11955
       revision: 1
       datasource: Prometheus
-
     # Custom Petclinic Overview Dashboard
     # Shows request rate, error rate, p95 latency, and service status
     # Only the 5 services with micrometer-registry-prometheus are included:

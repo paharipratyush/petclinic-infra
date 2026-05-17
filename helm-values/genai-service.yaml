@@ -1,6 +1,6 @@
 image:
   # Filled automatically by scripts/generate-config.sh after terraform apply
-  repository: PLACEHOLDER_ECR_REGISTRY/petclinic-dev/genai-service
+  repository: 482352877891.dkr.ecr.ap-south-1.amazonaws.com/petclinic-dev/genai-service
   tag: v1.0.0
 service:
   port: 8084
