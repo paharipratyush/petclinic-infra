@@ -13,12 +13,12 @@ resource "aws_acm_certificate" "wildcard" {
   })
 }
 
-# ── ACM validation records in Cloudflare ─────────────────────────────────────
-# Key by domain_name (known at plan time from SANs we define explicitly).
-# ACM returns the same CNAME record for both praty.dev and *.praty.dev,
-# so both Cloudflare records will have identical content.
-# allow_overwrite = true handles this gracefully — Cloudflare deduplicates
-# the actual DNS record while Terraform tracks two state entries.
+# ── ACM validation record in Cloudflare ──────────────────────────────────────
+# ACM uses the IDENTICAL CNAME for both praty.dev and *.praty.dev validation.
+# Creating two Cloudflare records with the same name/value causes:
+#   "attempted to override existing record however didn't find an exact match"
+# Fix: only create ONE record by filtering to the wildcard domain only.
+# One CNAME is sufficient — ACM validates both domains from it.
 resource "cloudflare_record" "acm_validation" {
   for_each = {
     for dvo in aws_acm_certificate.wildcard.domain_validation_options :
@@ -27,6 +27,7 @@ resource "cloudflare_record" "acm_validation" {
       value = trimsuffix(dvo.resource_record_value, ".")
       type  = dvo.resource_record_type
     }
+    if dvo.domain_name == "*.${var.domain_name}"
   }
 
   zone_id         = var.cloudflare_zone_id
@@ -36,11 +37,10 @@ resource "cloudflare_record" "acm_validation" {
   ttl             = 60
   proxied         = false
   allow_overwrite = true
-
-  comment = "ACM DNS validation for ${each.key}"
 }
 
 # ── Wait for ACM certificate validation ───────────────────────────────────────
+# Cert is already ISSUED from previous apply — this completes immediately.
 resource "aws_acm_certificate_validation" "wildcard" {
   certificate_arn = aws_acm_certificate.wildcard.arn
   depends_on      = [cloudflare_record.acm_validation]
