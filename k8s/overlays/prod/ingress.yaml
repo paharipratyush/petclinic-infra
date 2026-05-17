@@ -1,17 +1,12 @@
 # NOTE: Host values and certificate ARN are updated automatically by:
-#   ./scripts/generate-config.sh dev
-# Do NOT manually edit hostnames or certificate-arn — they are injected
-# from terraform outputs after every terraform apply.
-#
-# CERT_ARN_PLACEHOLDER      → filled with ACM certificate ARN from terraform output
-# PLACEHOLDER_PETCLINIC_HOST → e.g. petclinic-dev.your-domain.com
-# PLACEHOLDER_ADMIN_HOST     → e.g. admin-dev.your-domain.com
+#   ./scripts/generate-config.sh prod
+# Do NOT manually edit hostnames or certificate-arn.
 
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: petclinic-ingress
-  namespace: petclinic-dev
+  namespace: petclinic-prod
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
