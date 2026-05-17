@@ -71,11 +71,13 @@ if [ "${ENV}" = "prod" ]; then
   GRAFANA_HOST="grafana.${DOMAIN}"
   ARGOCD_HOST="argocd.${DOMAIN}"
   ADMIN_HOST="admin.${DOMAIN}"
+  ZIPKIN_HOST="zipkin.${DOMAIN}"
 else
   PETCLINIC_HOST="petclinic-dev.${DOMAIN}"
   GRAFANA_HOST="grafana-dev.${DOMAIN}"
   ARGOCD_HOST="argocd-dev.${DOMAIN}"
   ADMIN_HOST="admin-dev.${DOMAIN}"
+  ZIPKIN_HOST="zipkin-dev.${DOMAIN}"
 fi
 
 INFRA_REPO_URL="https://github.com/${GITHUB_ORG}/${INFRA_REPO}.git"
@@ -92,6 +94,7 @@ echo "   App     : https://${PETCLINIC_HOST}"
 echo "   Grafana : https://${GRAFANA_HOST}"
 echo "   ArgoCD  : https://${ARGOCD_HOST}"
 echo "   Admin   : https://${ADMIN_HOST}"
+echo "   Zipkin  : https://${ZIPKIN_HOST}"
 
 # ── Get Terraform outputs ─────────────────────────────────────────────────────
 echo ""
@@ -188,9 +191,11 @@ if [ -f "${MONITORING_INGRESS}" ]; then
   fi
   sed -i "s|PLACEHOLDER_GRAFANA_HOST|${GRAFANA_HOST}|g" "${MONITORING_INGRESS}"
   sed -i "s|PLACEHOLDER_ARGOCD_HOST|${ARGOCD_HOST}|g" "${MONITORING_INGRESS}"
+  sed -i "s|PLACEHOLDER_ZIPKIN_HOST|${ZIPKIN_HOST}|g" "${MONITORING_INGRESS}"
   echo "   ✅ monitoring/monitoring-ingress.yaml"
   echo "      ${GRAFANA_HOST} → grafana"
   echo "      ${ARGOCD_HOST} → argocd-server"
+  echo "      ${ZIPKIN_HOST} → zipkin"
 else
   echo "   ⚠️  monitoring/monitoring-ingress.yaml not found — skipping"
 fi
@@ -267,6 +272,4 @@ echo ""
 echo "  git add helm-values/ k8s/ monitoring/ argocd/"
 echo "  git commit -m 'config: update dynamic values for ${ENV}'"
 echo "  git push"
-echo ""
-echo " Commit ALL changed files including monitoring/prometheus-values.yaml"
-echo " so Helm picks up the updated namespace on next helm upgrade."
+echo "=============================================="

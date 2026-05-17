@@ -55,16 +55,43 @@ check_health() {
     return
   fi
 
-  local status
-  status=$(kubectl exec "${pod}" -n "${NAMESPACE}" -- \
-    wget -qO- "http://localhost:${port}${path}" 2>/dev/null | \
-    grep -o '"status":"[^"]*"' | head -1 || echo "")
+  local response
+  response=$(kubectl exec "${pod}" -n "${NAMESPACE}" -- \
+    wget -qO- "http://localhost:${port}${path}" 2>/dev/null || echo "")
 
-  if echo "${status}" | grep -q "UP"; then
+  if echo "${response}" | grep -q '"status":"UP"'; then
     echo "   ✅ ${service} health: UP"
     PASSED=$((PASSED + 1))
   else
-    echo "   ❌ ${service} health: ${status:-no response}"
+    echo "   ❌ ${service} health: no UP status in response"
+    FAILED=$((FAILED + 1))
+  fi
+}
+
+# ── Helper: check config-server specifically ──────────────────────────────────
+# Config-server intercepts /actuator/health as a config request.
+# Instead we verify it returns valid config by checking /petclinic-service/docker
+check_config_server() {
+  local pod
+  pod=$(kubectl get pod -n "${NAMESPACE}" -l "app.kubernetes.io/name=config-server" \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+
+  if [ -z "${pod}" ]; then
+    echo "   ❌ config-server: no pod found"
+    FAILED=$((FAILED + 1))
+    return
+  fi
+
+  # /petclinic-service/docker returns config for the app — proves config-server is serving
+  local response
+  response=$(kubectl exec "${pod}" -n "${NAMESPACE}" -- \
+    wget -qO- "http://localhost:8888/petclinic-service/docker" 2>/dev/null || echo "")
+
+  if echo "${response}" | grep -q '"propertySources"'; then
+    echo "   ✅ config-server: serving config (propertySources present)"
+    PASSED=$((PASSED + 1))
+  else
+    echo "   ❌ config-server: no valid config response"
     FAILED=$((FAILED + 1))
   fi
 }
@@ -84,7 +111,7 @@ check_deployment "admin-server"
 # ── Check 2: Config Server health ────────────────────────────────────────────
 echo ""
 echo "[2/4] Checking Config Server health..."
-check_health "config-server" "8888"
+check_config_server
 
 # ── Check 3: Discovery Server — all services registered ──────────────────────
 echo ""
@@ -93,14 +120,14 @@ POD=$(kubectl get pod -n "${NAMESPACE}" -l "app.kubernetes.io/name=discovery-ser
   -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 
 if [ -n "${POD}" ]; then
+  # Fetch Eureka apps XML — run grep locally (not inside pod) using simple -o flag
+  # No -P flag needed — works on all systems including WSL
   APPS=$(kubectl exec "${POD}" -n "${NAMESPACE}" -- \
-    wget -qO- http://localhost:8761/eureka/apps 2>/dev/null | \
-    grep -o '<application>.*</application>' | \
-    grep -oP '(?<=<name>)[^<]+' || echo "")
+    wget -qO- http://localhost:8761/eureka/apps 2>/dev/null || echo "")
 
   EXPECTED_SERVICES=("API-GATEWAY" "CUSTOMERS-SERVICE" "VISITS-SERVICE" "VETS-SERVICE" "GENAI-SERVICE" "ADMIN-SERVER")
   for SVC in "${EXPECTED_SERVICES[@]}"; do
-    if echo "${APPS}" | grep -qi "${SVC}"; then
+    if echo "${APPS}" | grep -qi "<name>${SVC}</name>"; then
       echo "   ✅ ${SVC} registered in Eureka"
       PASSED=$((PASSED + 1))
     else
