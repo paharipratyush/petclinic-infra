@@ -151,6 +151,9 @@ kubectl get applications -n argocd 2>/dev/null || true
 echo "  ✅ ArgoCD applications deployed"
 
 # ── Step 8: Monitoring stack ──────────────────────────────────────────────────
+echo ""
+echo "[8/9] Installing Metrics Server and monitoring stack..."
+
 echo "  Installing Metrics Server..."
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
 # EKS requires kubelet-insecure-tls
@@ -160,8 +163,6 @@ kubectl patch deployment metrics-server -n kube-system \
   2>/dev/null || true
 echo "  ✅ Metrics Server installed"
 
-echo ""
-echo "[8/9] Installing monitoring stack..."
 
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 2>/dev/null || true
 helm repo add grafana https://grafana.github.io/helm-charts 2>/dev/null || true
