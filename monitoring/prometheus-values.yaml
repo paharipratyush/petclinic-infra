@@ -8,7 +8,7 @@ server:
     scrape_interval: 15s
     evaluation_interval: 15s
 
-# Only install what we need — alertmanager is deployed separately
+# alertmanager is deployed separately (monitoring/alertmanager.yaml)
 alertmanager:
   enabled: false
 
@@ -18,26 +18,107 @@ pushgateway:
 nodeExporter:
   enabled: true
 
+# ── Alert rules ───────────────────────────────────────────────────────────────
+# Uses serverFiles (correct for standalone prometheus chart, not Prometheus Operator)
+# PrometheusRule CRDs require Prometheus Operator — we use the standalone chart.
+serverFiles:
+  alerting_rules.yml:
+    groups:
+      - name: petclinic-alerts
+        rules:
+          # Alert 1: Service down — no metrics received for 1 minute
+          - alert: ServiceDown
+            expr: up{job=~"api-gateway|customers-service|visits-service|vets-service|genai-service"} == 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Service {{ $labels.job }} is down"
+              description: "{{ $labels.job }} has been unreachable for more than 1 minute."
+
+          # Alert 2: High error rate — >5% 5xx responses over 5 minutes
+          - alert: HighErrorRate
+            expr: |
+              sum(rate(http_server_requests_seconds_count{job=~"api-gateway|customers-service|visits-service|vets-service|genai-service",status=~"5.."}[5m])) by (job)
+              /
+              sum(rate(http_server_requests_seconds_count{job=~"api-gateway|customers-service|visits-service|vets-service|genai-service"}[5m])) by (job)
+              > 0.05
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High error rate on {{ $labels.job }}"
+              description: "{{ $labels.job }} has >5% HTTP 5xx error rate for 5 minutes."
+
+          # Alert 3: High latency — p95 > 500ms over 5 minutes
+          - alert: HighLatency
+            expr: |
+              histogram_quantile(0.95,
+                sum(rate(http_server_requests_seconds_bucket{job=~"api-gateway|customers-service|visits-service|vets-service|genai-service"}[5m])) by (job, le)
+              ) > 0.5
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High latency on {{ $labels.job }}"
+              description: "{{ $labels.job }} p95 latency is above 500ms for 5 minutes."
+
+          # Alert 4: Pod restart loop — >3 restarts in 15 minutes
+          - alert: PodRestartLoop
+            expr: increase(kube_pod_container_status_restarts_total{namespace=~"petclinic-PLACEHOLDER_K8S_ENV"}[15m]) > 3
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Pod {{ $labels.pod }} is restart-looping"
+              description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has restarted more than 3 times in 15 minutes."
+
+          # Alert 5: High memory usage — >80% of container limit for 5 minutes
+          - alert: HighMemoryUsage
+            expr: |
+              container_memory_working_set_bytes{namespace=~"petclinic-PLACEHOLDER_K8S_ENV",container!=""}
+              /
+              container_spec_memory_limit_bytes{namespace=~"petclinic-PLACEHOLDER_K8S_ENV",container!=""}
+              > 0.8
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High memory usage for {{ $labels.container }}"
+              description: "Container {{ $labels.container }} in pod {{ $labels.pod }} is using >80% of its memory limit."
+
+  # Connect Prometheus to Alertmanager for alert routing
+  prometheus.yml:
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+                - alertmanager.monitoring:9093
+    rule_files:
+      - /etc/config/alerting_rules.yml
+
 # Scrape only the 5 services that have micrometer-registry-prometheus
-# DO NOT add config-server, discovery-server, or admin-server — they return 404
+# DO NOT add config-server, discovery-server, or admin-server
+# They do not have the prometheus dependency and will return 404
+# Namespace is updated by scripts/generate-config.sh (replaces PLACEHOLDER_K8S_NAMESPACE)
 extraScrapeConfigs: |
   - job_name: api-gateway
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['api-gateway.petclinic-dev:8080']
+      - targets: ['api-gateway.PLACEHOLDER_K8S_NAMESPACE:8080']
   - job_name: customers-service
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['customers-service.petclinic-dev:8081']
+      - targets: ['customers-service.PLACEHOLDER_K8S_NAMESPACE:8081']
   - job_name: visits-service
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['visits-service.petclinic-dev:8082']
+      - targets: ['visits-service.PLACEHOLDER_K8S_NAMESPACE:8082']
   - job_name: vets-service
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['vets-service.petclinic-dev:8083']
+      - targets: ['vets-service.PLACEHOLDER_K8S_NAMESPACE:8083']
   - job_name: genai-service
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['genai-service.petclinic-dev:8084']
+      - targets: ['genai-service.PLACEHOLDER_K8S_NAMESPACE:8084']

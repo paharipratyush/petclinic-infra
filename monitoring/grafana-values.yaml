@@ -1,8 +1,22 @@
-adminPassword: "petclinic-grafana-2026"
+# Grafana admin credentials come from a K8s Secret synced from AWS Secrets Manager
+# via External Secrets Operator. Run scripts/generate-config.sh after terraform apply.
+# The secret 'grafana-admin' is created by k8s/overlays/{env}/grafana-external-secret.yaml
+admin:
+  existingSecret: grafana-admin
+  userKey: admin-user
+  passwordKey: admin-password
+
 persistence:
   enabled: true
   size: 5Gi
   storageClassName: gp2
+
+# root_url is updated by scripts/generate-config.sh
+# Format: https://grafana-{env}.{domain} or https://grafana.{domain}
+grafana.ini:
+  server:
+    root_url: https://PLACEHOLDER_GRAFANA_HOST
+
 datasources:
   datasources.yaml:
     apiVersion: 1
@@ -18,6 +32,7 @@ datasources:
         uid: loki
         url: http://loki.monitoring:3100
         access: proxy
+
 dashboardProviders:
   dashboardproviders.yaml:
     apiVersion: 1
@@ -29,9 +44,11 @@ dashboardProviders:
         disableDeletion: false
         options:
           path: /var/lib/grafana/dashboards/default
+
 dashboards:
   default:
-    spring-boot:
+    # Community dashboards
+    spring-boot-statistics:
       gnetId: 4701
       revision: 1
       datasource: Prometheus
@@ -39,6 +56,150 @@ dashboards:
       gnetId: 11955
       revision: 1
       datasource: Prometheus
-grafana.ini:
-  server:
-    root_url: https://grafana-dev.praty.dev
+
+    # Custom Petclinic Overview Dashboard
+    # Shows request rate, error rate, p95 latency, and service status
+    # Only the 5 services with micrometer-registry-prometheus are included:
+    #   api-gateway, customers-service, visits-service, vets-service, genai-service
+    # config-server, discovery-server, admin-server do NOT have prometheus dependency
+    petclinic-overview:
+      json: |
+        {
+          "schemaVersion": 38,
+          "title": "Petclinic Services Overview",
+          "uid": "petclinic-overview",
+          "tags": ["petclinic"],
+          "timezone": "browser",
+          "refresh": "30s",
+          "time": {"from": "now-1h", "to": "now"},
+          "panels": [
+            {
+              "id": 1,
+              "title": "Service Status",
+              "type": "stat",
+              "gridPos": {"h": 4, "w": 24, "x": 0, "y": 0},
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "options": {"colorMode": "background", "graphMode": "none", "textMode": "auto"},
+              "fieldConfig": {
+                "defaults": {
+                  "mappings": [
+                    {"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "UP", "color": "green"}}}
+                  ],
+                  "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+                }
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": {"type": "prometheus", "uid": "prometheus"},
+                  "expr": "up{job=~\"api-gateway|customers-service|visits-service|vets-service|genai-service\"}",
+                  "legendFormat": "{{job}}"
+                }
+              ]
+            },
+            {
+              "id": 2,
+              "title": "Request Rate (req/s)",
+              "type": "timeseries",
+              "gridPos": {"h": 8, "w": 24, "x": 0, "y": 4},
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"lineWidth": 2}}},
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": {"type": "prometheus", "uid": "prometheus"},
+                  "expr": "sum(rate(http_server_requests_seconds_count{job=~\"api-gateway|customers-service|visits-service|vets-service|genai-service\"}[5m])) by (job)",
+                  "legendFormat": "{{job}}"
+                }
+              ]
+            },
+            {
+              "id": 3,
+              "title": "Error Rate (5xx %)",
+              "type": "timeseries",
+              "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "percentunit",
+                  "custom": {"lineWidth": 2},
+                  "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.01}, {"color": "red", "value": 0.05}]}
+                }
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": {"type": "prometheus", "uid": "prometheus"},
+                  "expr": "sum(rate(http_server_requests_seconds_count{job=~\"api-gateway|customers-service|visits-service|vets-service|genai-service\",status=~\"5..\"}[5m])) by (job) / sum(rate(http_server_requests_seconds_count{job=~\"api-gateway|customers-service|visits-service|vets-service|genai-service\"}[5m])) by (job)",
+                  "legendFormat": "{{job}} error rate"
+                }
+              ]
+            },
+            {
+              "id": 4,
+              "title": "P95 Latency",
+              "type": "timeseries",
+              "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "s",
+                  "custom": {"lineWidth": 2},
+                  "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.2}, {"color": "red", "value": 0.5}]}
+                }
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": {"type": "prometheus", "uid": "prometheus"},
+                  "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=~\"api-gateway|customers-service|visits-service|vets-service|genai-service\"}[5m])) by (job, le))",
+                  "legendFormat": "{{job}} p95"
+                }
+              ]
+            },
+            {
+              "id": 5,
+              "title": "P99 Latency",
+              "type": "timeseries",
+              "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "s",
+                  "custom": {"lineWidth": 2},
+                  "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.5}, {"color": "red", "value": 2.0}]}
+                }
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": {"type": "prometheus", "uid": "prometheus"},
+                  "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{job=~\"api-gateway|customers-service|visits-service|vets-service|genai-service\"}[5m])) by (job, le))",
+                  "legendFormat": "{{job}} p99"
+                }
+              ]
+            },
+            {
+              "id": 6,
+              "title": "JVM Heap Usage",
+              "type": "timeseries",
+              "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+              "datasource": {"type": "prometheus", "uid": "prometheus"},
+              "fieldConfig": {"defaults": {"unit": "bytes", "custom": {"lineWidth": 2}}},
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": {"type": "prometheus", "uid": "prometheus"},
+                  "expr": "sum(jvm_memory_used_bytes{area=\"heap\",job=~\"api-gateway|customers-service|visits-service|vets-service|genai-service\"}) by (job)",
+                  "legendFormat": "{{job}} heap used"
+                },
+                {
+                  "refId": "B",
+                  "datasource": {"type": "prometheus", "uid": "prometheus"},
+                  "expr": "sum(jvm_memory_max_bytes{area=\"heap\",job=~\"api-gateway|customers-service|visits-service|vets-service|genai-service\"}) by (job)",
+                  "legendFormat": "{{job}} heap max"
+                }
+              ]
+            }
+          ]
+        }

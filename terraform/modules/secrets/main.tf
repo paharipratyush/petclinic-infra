@@ -15,6 +15,32 @@ resource "aws_secretsmanager_secret_version" "openai" {
   secret_string = var.openai_api_key == "" ? "demo" : var.openai_api_key
 }
 
+# ── Grafana Admin Credentials ─────────────────────────────────────────────────
+resource "random_password" "grafana" {
+  length           = 16
+  special          = true
+  override_special = "!#$%^&*()-_=+[]{}|"
+}
+
+resource "aws_secretsmanager_secret" "grafana" {
+  name                    = "petclinic/${var.environment}/grafana-credentials"
+  recovery_window_in_days = 0
+  description             = "Grafana admin credentials for ${var.project}-${var.environment}"
+
+  tags = merge(var.tags, {
+    Name = "petclinic/${var.environment}/grafana-credentials"
+  })
+}
+
+resource "aws_secretsmanager_secret_version" "grafana" {
+  secret_id = aws_secretsmanager_secret.grafana.id
+  secret_string = jsonencode({
+    username = "admin"
+    password = random_password.grafana.result
+  })
+}
+
+
 # ── IRSA Role: External Secrets Operator ─────────────────────────────────────
 resource "aws_iam_role" "eso" {
   name = "${var.project}-${var.environment}-eso-role"

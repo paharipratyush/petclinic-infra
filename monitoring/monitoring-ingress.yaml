@@ -1,5 +1,12 @@
-# NOTE: Host values and cert ARN are updated automatically by:
+# NOTE: Host values and certificate ARN are updated automatically by:
 #   ./scripts/generate-config.sh dev
+# Do NOT manually edit host values or certificate-arn — they are injected from
+# terraform outputs and terraform.tfvars after every terraform apply.
+#
+# PLACEHOLDER_GRAFANA_HOST  → e.g. grafana-dev.your-domain.com
+# PLACEHOLDER_ARGOCD_HOST   → e.g. argocd-dev.your-domain.com
+# CERT_ARN_PLACEHOLDER      → your ACM certificate ARN from terraform output
+
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -17,7 +24,7 @@ metadata:
 spec:
   ingressClassName: alb
   rules:
-    - host: grafana-dev.praty.dev
+    - host: PLACEHOLDER_GRAFANA_HOST
       http:
         paths:
           - path: /
@@ -40,13 +47,14 @@ metadata:
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
     alb.ingress.kubernetes.io/ssl-redirect: "443"
     alb.ingress.kubernetes.io/group.name: petclinic-monitoring
-    alb.ingress.kubernetes.io/backend-protocol: HTTPS
-    alb.ingress.kubernetes.io/healthcheck-protocol: HTTPS
+    # ArgoCD runs with --insecure flag (HTTP backend, TLS terminated at ALB)
+    # Do NOT use backend-protocol: HTTPS here — that would conflict with --insecure mode
     alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/healthcheck-port: "8080"
 spec:
   ingressClassName: alb
   rules:
-    - host: argocd-dev.praty.dev
+    - host: PLACEHOLDER_ARGOCD_HOST
       http:
         paths:
           - path: /
@@ -55,4 +63,4 @@ spec:
               service:
                 name: argocd-server
                 port:
-                  number: 443
+                  number: 80

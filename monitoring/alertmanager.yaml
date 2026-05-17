@@ -1,4 +1,19 @@
 apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: alertmanager-storage
+  namespace: monitoring
+  labels:
+    app: alertmanager
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp2
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
 kind: ConfigMap
 metadata:
   name: alertmanager-config
@@ -29,7 +44,8 @@ data:
     receivers:
       - name: 'null'
       - name: 'critical-alerts'
-        # Add email/Slack here — see docs/monitoring-alerting-guide.md
+        # Configure your notification channel here — see docs/monitoring-alerting-guide.md
+        # Email example:
         # email_configs:
         #   - to: 'your-email@example.com'
         #     from: 'alertmanager@petclinic'
@@ -37,8 +53,12 @@ data:
         #     auth_username: 'your-email@example.com'
         #     auth_password: 'your-app-password'
         #     require_tls: true
+        # Slack example:
+        # slack_configs:
+        #   - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        #     channel: '#alerts'
       - name: 'warning-alerts'
-        # Same as critical — add your notification channel
+        # Same as critical — add your notification channel above
 
     inhibit_rules:
       - source_matchers:
@@ -106,7 +126,9 @@ spec:
           configMap:
             name: alertmanager-config
         - name: storage
-          emptyDir: {}
+          # PVC ensures alert history survives pod restarts
+          persistentVolumeClaim:
+            claimName: alertmanager-storage
 ---
 apiVersion: v1
 kind: Service

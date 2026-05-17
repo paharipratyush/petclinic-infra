@@ -81,3 +81,8 @@ output "lb_controller_role_arn" {
 output "github_actions_role_arn" {
   value = module.github_oidc.role_arn
 }
+
+output "grafana_secret_arn" {
+  description = "Grafana admin credentials secret ARN"
+  value       = module.secrets.grafana_secret_arn
+}
