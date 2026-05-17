@@ -2,26 +2,12 @@ data "aws_caller_identity" "current" {}
 
 # ── GitHub OIDC Provider ──────────────────────────────────────────────────────
 # The GitHub OIDC provider is account-level (not per-environment).
-# We try to look it up first — if it exists (created by another env apply),
-# we use it. If it doesn't exist, we create it.
-# This makes the module safe to apply for both dev and prod.
-
-data "aws_iam_openid_connect_provider" "github_existing" {
-  # This will succeed if the provider already exists, fail if not
-  url = "https://token.actions.githubusercontent.com"
-}
-
-locals {
-  # Use existing provider ARN if found, otherwise use the one we create
-  github_oidc_provider_arn = try(
-    data.aws_iam_openid_connect_provider.github_existing.arn,
-    aws_iam_openid_connect_provider.github[0].arn
-  )
-}
+# dev creates it (create_oidc_provider = true).
+# prod references the existing one (create_oidc_provider = false).
+# This avoids data source lookup failures on first apply.
 
 resource "aws_iam_openid_connect_provider" "github" {
-  # Only create if it doesn't already exist
-  count = try(data.aws_iam_openid_connect_provider.github_existing.arn, "") != "" ? 0 : 1
+  count = var.create_oidc_provider ? 1 : 0
 
   url            = "https://token.actions.githubusercontent.com"
   client_id_list = ["sts.amazonaws.com"]
@@ -29,6 +15,19 @@ resource "aws_iam_openid_connect_provider" "github" {
     "6938fd4d98bab03faadb97b34396831e3780aea1",
     "1c58a3a8518e8759bf075b76b750d4f2df264fcd"
   ]
+}
+
+data "aws_iam_openid_connect_provider" "github_existing" {
+  count = var.create_oidc_provider ? 0 : 1
+  url   = "https://token.actions.githubusercontent.com"
+}
+
+locals {
+  github_oidc_provider_arn = var.create_oidc_provider ? (
+    aws_iam_openid_connect_provider.github[0].arn
+  ) : (
+    data.aws_iam_openid_connect_provider.github_existing[0].arn
+  )
 }
 
 # ── GitHub Actions IAM Role ───────────────────────────────────────────────────
