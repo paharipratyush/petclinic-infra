@@ -88,3 +88,18 @@ output "grafana_secret_arn" {
   description = "Grafana admin credentials secret ARN"
   value       = module.secrets.grafana_secret_arn
 }
+
+output "karpenter_role_arn" {
+  description = "Karpenter controller IRSA role ARN"
+  value       = module.karpenter.karpenter_role_arn
+}
+
+output "karpenter_queue_name" {
+  description = "Karpenter SQS interruption queue name"
+  value       = module.karpenter.karpenter_queue_name
+}
+
+output "karpenter_instance_profile_name" {
+  description = "Karpenter node instance profile name"
+  value       = module.karpenter.karpenter_instance_profile_name
+}

@@ -1,0 +1,38 @@
+# ── Karpenter Spot NodePool (Dev) ─────────────────────────────────────────────
+# Apply this file AFTER the Graviton free trial expires to enable Spot savings (~70%).
+# Do NOT apply while the free trial is active — Spot provides no benefit vs free on-demand.
+#
+# Usage:
+#   kubectl apply -f k8s/base/karpenter/nodepool-spot-dev.yaml
+#
+# This REPLACES the default NodePool (same name). To revert:
+#   kubectl apply -f k8s/base/karpenter/nodepool.yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  template:
+    spec:
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["arm64"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          # Spot + on-demand for cost savings after free trial expires
+          # Multiple instance types improve Spot availability
+          values: ["spot", "on-demand"]
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["t4g.small", "t4g.medium"]
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+  limits:
+    cpu: "8"
+    memory: 32Gi
+  disruption:
+    consolidationPolicy: WhenUnderutilized
+    consolidateAfter: 30s

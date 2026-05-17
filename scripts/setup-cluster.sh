@@ -151,6 +151,15 @@ kubectl get applications -n argocd 2>/dev/null || true
 echo "  ✅ ArgoCD applications deployed"
 
 # ── Step 8: Monitoring stack ──────────────────────────────────────────────────
+echo "  Installing Metrics Server..."
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+# EKS requires kubelet-insecure-tls
+kubectl patch deployment metrics-server -n kube-system \
+  --type='json' \
+  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]' \
+  2>/dev/null || true
+echo "  ✅ Metrics Server installed"
+
 echo ""
 echo "[8/9] Installing monitoring stack..."
 
@@ -193,6 +202,7 @@ echo "  Applying Zipkin..."
 kubectl apply -f "${REPO_ROOT}/monitoring/zipkin.yaml"
 
 echo "  ✅ Monitoring stack installed"
+
 
 # ── Step 9: Ingresses ─────────────────────────────────────────────────────────
 echo ""

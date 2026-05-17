@@ -1,0 +1,18 @@
+# Metrics Server — required for HPA (Horizontal Pod Autoscaler) to work
+# kubectl top nodes and kubectl top pods also require this
+# Source: https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+# Install command: kubectl apply -f k8s/base/karpenter/metrics-server.yaml
+#
+# Note: This file is a reference. The actual installation is done by setup-cluster.sh
+# The metrics-server needs --kubelet-insecure-tls flag on EKS
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    k8s-app: metrics-server
+  name: metrics-server
+  namespace: kube-system
+---
+# Full manifest downloaded from official release.
+# To get the latest: curl -sL https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+# EKS requires: --kubelet-insecure-tls arg added to the Deployment

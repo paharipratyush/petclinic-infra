@@ -1,0 +1,66 @@
+# ── Karpenter NodePool ────────────────────────────────────────────────────────
+# Defines what nodes Karpenter can provision.
+# Resource limits are REQUIRED — without them Karpenter has no upper bound
+# and could provision dozens of nodes on a single misconfigured workload.
+#
+# NOTE: Capacity type is on-demand while Graviton free trial is active (until Dec 2026).
+# When the free trial expires, apply nodepool-spot-dev.yaml to enable Spot savings.
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  template:
+    spec:
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["arm64"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          # on-demand only while Graviton free trial is active
+          # Switch to ["spot", "on-demand"] after trial expires
+          values: ["on-demand"]
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["t4g.small", "t4g.medium"]
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+  # Hard limits — prevents unbounded cost from misconfigured workloads
+  limits:
+    cpu: "8"
+    memory: 32Gi
+  disruption:
+    consolidationPolicy: WhenUnderutilized
+    consolidateAfter: 30s
+---
+# ── Karpenter EC2NodeClass ────────────────────────────────────────────────────
+# Defines EC2 configuration for Karpenter-provisioned nodes.
+# IMPORTANT: subnet and security group selectors use karpenter.sh/discovery tag.
+# These tags MUST exist on VPC subnets and node security group (set in vpc module).
+# The instance profile name MUST match exactly what Terraform creates.
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: default
+spec:
+  amiSelectorTerms:
+    - alias: al2023@latest
+  subnetSelectorTerms:
+    - tags:
+        # This tag is set on subnets in terraform/modules/vpc/main.tf
+        karpenter.sh/discovery: petclinic-dev
+  securityGroupSelectorTerms:
+    - tags:
+        # This tag is set on the node SG in terraform/modules/vpc/main.tf
+        karpenter.sh/discovery: petclinic-dev
+  # MUST match exactly: terraform/modules/karpenter/main.tf
+  # aws_iam_instance_profile.karpenter_node.name
+  instanceProfile: petclinic-dev-karpenter-node-profile
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: 20Gi
+        volumeType: gp3
