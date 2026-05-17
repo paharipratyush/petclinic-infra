@@ -212,14 +212,17 @@ echo "[9/9] Applying ingresses..."
 # App ingress (petclinic + admin in petclinic-{env} namespace)
 kubectl apply -f "${REPO_ROOT}/k8s/overlays/${ENV}/ingress.yaml"
 
-# Monitoring ingress (grafana in monitoring namespace, argocd in argocd namespace)
-# Apply each document separately to handle multi-namespace gracefully
+# Grafana ingress (monitoring namespace)
 yq 'select(.metadata.namespace == "monitoring")' \
-  "${REPO_ROOT}/monitoring/monitoring-ingress.yaml" | kubectl apply -f - || \
-kubectl apply -f "${REPO_ROOT}/monitoring/monitoring-ingress.yaml"
+  "${REPO_ROOT}/monitoring/monitoring-ingress.yaml" | kubectl apply -f -
 
+# ArgoCD ingress (argocd namespace)
 yq 'select(.metadata.namespace == "argocd")' \
-  "${REPO_ROOT}/monitoring/monitoring-ingress.yaml" | kubectl apply -f - 2>/dev/null || true
+  "${REPO_ROOT}/monitoring/monitoring-ingress.yaml" | kubectl apply -f -
+
+# Zipkin ingress (tracing namespace)
+yq 'select(.metadata.namespace == "tracing")' \
+  "${REPO_ROOT}/monitoring/monitoring-ingress.yaml" | kubectl apply -f -
 
 echo "  Waiting 3 minutes for ALBs to provision..."
 sleep 180
@@ -229,6 +232,7 @@ echo "  Ingress addresses:"
 kubectl get ingress -n "petclinic-${ENV}" 2>/dev/null || true
 kubectl get ingress -n monitoring 2>/dev/null || true
 kubectl get ingress -n argocd 2>/dev/null || true
+kubectl get ingress -n tracing 2>/dev/null || true
 echo "  ✅ Ingresses applied"
 
 # ── Final instructions ────────────────────────────────────────────────────────
