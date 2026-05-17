@@ -28,6 +28,10 @@ env:
     value: "http://zipkin.tracing:9411/api/v2/spans"
   - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
     value: "1.0"
+  - name: MANAGEMENT_METRICS_DISTRIBUTION_PERCENTILESHISTOGRAM_HTTP_SERVER_REQUESTS
+    value: "true"
+  - name: MANAGEMENT_METRICS_DISTRIBUTION_SLO_HTTP_SERVER_REQUESTS
+    value: "50ms,100ms,200ms,500ms,1s,2s"
 initContainers:
   - name: wait-for-config-server
     image: busybox:1.36
