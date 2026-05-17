@@ -232,3 +232,15 @@ resource "aws_cloudwatch_event_target" "scheduled_change" {
   rule = aws_cloudwatch_event_rule.scheduled_change.name
   arn  = aws_sqs_queue.interruption.arn
 }
+
+
+# ── EKS Access Entry for Karpenter nodes ─────────────────────────────────────
+# Karpenter-launched nodes use this IAM role.
+# MUST be registered as EC2_LINUX so nodes can join the cluster.
+# Without this, EC2 instances launch but never register as Kubernetes nodes.
+resource "aws_eks_access_entry" "karpenter_node" {
+  cluster_name  = var.cluster_name
+  principal_arn = aws_iam_role.karpenter_node.arn
+  type          = "EC2_LINUX"
+  tags          = var.tags
+}
