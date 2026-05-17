@@ -9,8 +9,9 @@
 #   5. AWS Load Balancer Controller
 #   6. External Secrets (ClusterSecretStore + ExternalSecret CRs)
 #   7. ArgoCD Applications
-#   8. Monitoring stack
-#   9. Ingresses
+#   8. Karpenter (node autoscaling)
+#   9. Monitoring stack
+#  10. Ingresses
 #
 # Usage:
 #   ./scripts/setup-cluster.sh        # defaults to dev
@@ -36,9 +37,9 @@ for cmd in kubectl helm aws terraform yq; do
   fi
 done
 
-# ── Read terraform outputs (all paths derived, nothing hardcoded) ─────────────
+# ── Read terraform outputs ────────────────────────────────────────────────────
 echo ""
-echo "[0/9] Reading Terraform outputs..."
+echo "[0/10] Reading Terraform outputs..."
 cd "${TF_DIR}"
 
 CLUSTER_NAME=$(terraform output -raw cluster_name)
@@ -46,26 +47,29 @@ LB_ROLE_ARN=$(terraform output -raw lb_controller_role_arn)
 VPC_ID=$(terraform output -raw vpc_id)
 ESO_ROLE_ARN=$(terraform output -raw eso_role_arn)
 CERT_ARN=$(terraform output -raw certificate_arn)
+KARPENTER_ROLE_ARN=$(terraform output -raw karpenter_role_arn)
+KARPENTER_QUEUE=$(terraform output -raw karpenter_queue_name)
 
 cd "${REPO_ROOT}"
 
-# Derive region from tfvars
 TFVARS="${TF_DIR}/terraform.tfvars"
 AWS_REGION=$(grep "^aws_region" "${TFVARS}" \
   | sed 's/.*=\s*//' | tr -d '"' | tr -d "'" | tr -d ' ' \
   || aws configure get region 2>/dev/null \
   || echo "ap-south-1")
 
-echo "  Cluster     : ${CLUSTER_NAME}"
-echo "  Region      : ${AWS_REGION}"
-echo "  LB Role ARN : ${LB_ROLE_ARN}"
-echo "  VPC ID      : ${VPC_ID}"
-echo "  ESO Role ARN: ${ESO_ROLE_ARN}"
-echo "  Cert ARN    : ${CERT_ARN}"
+echo "  Cluster        : ${CLUSTER_NAME}"
+echo "  Region         : ${AWS_REGION}"
+echo "  LB Role ARN    : ${LB_ROLE_ARN}"
+echo "  VPC ID         : ${VPC_ID}"
+echo "  ESO Role ARN   : ${ESO_ROLE_ARN}"
+echo "  Cert ARN       : ${CERT_ARN}"
+echo "  Karpenter Role : ${KARPENTER_ROLE_ARN}"
+echo "  Karpenter Queue: ${KARPENTER_QUEUE}"
 
 # ── Step 1: kubectl config ────────────────────────────────────────────────────
 echo ""
-echo "[1/9] Configuring kubectl..."
+echo "[1/10] Configuring kubectl..."
 aws eks update-kubeconfig \
   --name "${CLUSTER_NAME}" \
   --region "${AWS_REGION}"
@@ -77,19 +81,19 @@ echo "  ✅ kubectl configured"
 
 # ── Step 2: Namespaces ────────────────────────────────────────────────────────
 echo ""
-echo "[2/9] Creating namespaces..."
+echo "[2/10] Creating namespaces..."
 kubectl apply -f "${REPO_ROOT}/k8s/base/namespaces.yaml"
 echo "  ✅ Namespaces created"
 
 # ── Step 3: ArgoCD ────────────────────────────────────────────────────────────
 echo ""
-echo "[3/9] Installing ArgoCD..."
+echo "[3/10] Installing ArgoCD..."
 "${REPO_ROOT}/argocd/install/install-argocd.sh" --env "${ENV}"
 echo "  ✅ ArgoCD installed"
 
 # ── Step 4: External Secrets Operator ────────────────────────────────────────
 echo ""
-echo "[4/9] Installing External Secrets Operator..."
+echo "[4/10] Installing External Secrets Operator..."
 helm repo add external-secrets https://charts.external-secrets.io 2>/dev/null || true
 helm repo update
 helm upgrade --install external-secrets external-secrets/external-secrets \
@@ -101,7 +105,7 @@ echo "  ✅ ESO installed (v0.14.4)"
 
 # ── Step 5: AWS Load Balancer Controller ──────────────────────────────────────
 echo ""
-echo "[5/9] Installing AWS Load Balancer Controller..."
+echo "[5/10] Installing AWS Load Balancer Controller..."
 helm repo add eks https://aws.github.io/eks-charts 2>/dev/null || true
 helm repo update
 helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
@@ -118,9 +122,8 @@ echo "  ✅ LB Controller installed (chart v1.8.1 = app v2.8.1)"
 
 # ── Step 6: External Secrets setup ───────────────────────────────────────────
 echo ""
-echo "[6/9] Setting up External Secrets..."
+echo "[6/10] Setting up External Secrets..."
 
-# Apply ServiceAccount and ClusterSecretStore
 kubectl apply -f "${REPO_ROOT}/k8s/base/external-secrets/serviceaccount.yaml"
 kubectl apply -f "${REPO_ROOT}/k8s/base/external-secrets/cluster-secret-store.yaml"
 
@@ -128,7 +131,6 @@ echo "  Waiting 15s for ClusterSecretStore to validate..."
 sleep 15
 kubectl get clustersecretstore
 
-# Apply all ExternalSecret CRs for this environment
 kubectl apply -f "${REPO_ROOT}/k8s/overlays/${ENV}/rds-external-secret.yaml"
 kubectl apply -f "${REPO_ROOT}/k8s/overlays/${ENV}/openai-external-secret.yaml"
 kubectl apply -f "${REPO_ROOT}/k8s/overlays/${ENV}/grafana-external-secret.yaml"
@@ -143,26 +145,43 @@ echo "  ✅ Secrets configured"
 
 # ── Step 7: ArgoCD Applications ───────────────────────────────────────────────
 echo ""
-echo "[7/9] Deploying ArgoCD Applications..."
+echo "[7/10] Deploying ArgoCD Applications..."
 kubectl apply -f "${REPO_ROOT}/argocd/applications/${ENV}/"
 echo "  Waiting 60s for ArgoCD to begin syncing..."
 sleep 60
 kubectl get applications -n argocd 2>/dev/null || true
 echo "  ✅ ArgoCD applications deployed"
 
-# ── Step 8: Monitoring stack ──────────────────────────────────────────────────
+# ── Step 8: Karpenter ─────────────────────────────────────────────────────────
+# Installed before monitoring so Karpenter can provision nodes if monitoring
+# pods require more capacity than the managed node group provides.
 echo ""
-echo "[8/9] Installing Metrics Server and monitoring stack..."
+echo "[8/10] Installing Karpenter..."
+helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter \
+  --version 1.1.1 \
+  -n kube-system \
+  --set "settings.clusterName=${CLUSTER_NAME}" \
+  --set "settings.interruptionQueue=${KARPENTER_QUEUE}" \
+  --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=${KARPENTER_ROLE_ARN}" \
+  --set controller.resources.requests.cpu=100m \
+  --set controller.resources.requests.memory=256Mi \
+  --wait --timeout 120s
+
+kubectl apply -f "${REPO_ROOT}/k8s/base/karpenter/nodepool.yaml"
+kubectl get nodepool
+echo "  ✅ Karpenter installed (v1.1.1) and NodePool applied"
+
+# ── Step 9: Monitoring stack ──────────────────────────────────────────────────
+echo ""
+echo "[9/10] Installing Metrics Server and monitoring stack..."
 
 echo "  Installing Metrics Server..."
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
-# EKS requires kubelet-insecure-tls
 kubectl patch deployment metrics-server -n kube-system \
   --type='json' \
   -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]' \
   2>/dev/null || true
 echo "  ✅ Metrics Server installed"
-
 
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 2>/dev/null || true
 helm repo add grafana https://grafana.github.io/helm-charts 2>/dev/null || true
@@ -204,10 +223,9 @@ kubectl apply -f "${REPO_ROOT}/monitoring/zipkin.yaml"
 
 echo "  ✅ Monitoring stack installed"
 
-
-# ── Step 9: Ingresses ─────────────────────────────────────────────────────────
+# ── Step 10: Ingresses ────────────────────────────────────────────────────────
 echo ""
-echo "[9/9] Applying ingresses..."
+echo "[10/10] Applying ingresses..."
 
 # App ingress (petclinic + admin in petclinic-{env} namespace)
 kubectl apply -f "${REPO_ROOT}/k8s/overlays/${ENV}/ingress.yaml"
