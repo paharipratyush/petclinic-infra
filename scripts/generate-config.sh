@@ -167,6 +167,7 @@ echo "[4/7] Updating app ingress (cert ARN + hostnames)..."
 APP_INGRESS="${REPO_ROOT}/k8s/overlays/${ENV}/ingress.yaml"
 if [ -f "${APP_INGRESS}" ]; then
   if [ -n "${CERT_ARN}" ]; then
+    # Use yq by path — always overwrites current value (works on every run)
     yq -i \
       ".metadata.annotations[\"alb.ingress.kubernetes.io/certificate-arn\"] = \"${CERT_ARN}\"" \
       "${APP_INGRESS}"
@@ -174,6 +175,7 @@ if [ -f "${APP_INGRESS}" ]; then
   yq -i ".spec.rules[0].host = \"${PETCLINIC_HOST}\"" "${APP_INGRESS}"
   yq -i ".spec.rules[1].host = \"${ADMIN_HOST}\"" "${APP_INGRESS}"
   echo "   ✅ k8s/overlays/${ENV}/ingress.yaml"
+  echo "      Cert ARN: ${CERT_ARN}"
   echo "      ${PETCLINIC_HOST} → api-gateway"
   echo "      ${ADMIN_HOST} → admin-server"
 else
@@ -187,12 +189,27 @@ echo "[5/7] Updating monitoring ingress (cert ARN + hostnames)..."
 MONITORING_INGRESS="${REPO_ROOT}/monitoring/monitoring-ingress.yaml"
 if [ -f "${MONITORING_INGRESS}" ]; then
   if [ -n "${CERT_ARN}" ]; then
+    # Step 1: Replace placeholder (first-time run)
     sed -i "s|CERT_ARN_PLACEHOLDER|${CERT_ARN}|g" "${MONITORING_INGRESS}"
+    # Step 2: Replace ANY existing ACM cert ARN (handles re-run after destroy+recreate)
+    # This regex matches any ARN in format: arn:aws:acm:{region}:{account}:certificate/{uuid}
+    sed -i "s|arn:aws:acm:[a-z0-9-]*:[0-9]*:certificate/[a-f0-9-]*|${CERT_ARN}|g" \
+      "${MONITORING_INGRESS}"
   fi
+  # Replace host placeholders (first-time run)
   sed -i "s|PLACEHOLDER_GRAFANA_HOST|${GRAFANA_HOST}|g" "${MONITORING_INGRESS}"
   sed -i "s|PLACEHOLDER_ARGOCD_HOST|${ARGOCD_HOST}|g" "${MONITORING_INGRESS}"
   sed -i "s|PLACEHOLDER_ZIPKIN_HOST|${ZIPKIN_HOST}|g" "${MONITORING_INGRESS}"
+  # Replace ANY existing host values with current ones (handles re-run after destroy+recreate)
+  # Covers both dev (grafana-dev.X) and prod (grafana.X) patterns
+  sed -i "s|grafana-dev\.[^'\"[:space:]]*\|grafana\.[^'\"[:space:]]*|${GRAFANA_HOST}|g" \
+    "${MONITORING_INGRESS}" 2>/dev/null || true
+  sed -i "s|argocd-dev\.[^'\"[:space:]]*\|argocd\.[^'\"[:space:]]*|${ARGOCD_HOST}|g" \
+    "${MONITORING_INGRESS}" 2>/dev/null || true
+  sed -i "s|zipkin-dev\.[^'\"[:space:]]*\|zipkin\.[^'\"[:space:]]*|${ZIPKIN_HOST}|g" \
+    "${MONITORING_INGRESS}" 2>/dev/null || true
   echo "   ✅ monitoring/monitoring-ingress.yaml"
+  echo "      Cert ARN: ${CERT_ARN}"
   echo "      ${GRAFANA_HOST} → grafana"
   echo "      ${ARGOCD_HOST} → argocd-server"
   echo "      ${ZIPKIN_HOST} → zipkin"
@@ -208,17 +225,18 @@ PROM_VALUES="${REPO_ROOT}/monitoring/prometheus-values.yaml"
 if [ -f "${PROM_VALUES}" ]; then
   sed -i "s|PLACEHOLDER_K8S_NAMESPACE|${K8S_NAMESPACE}|g" "${PROM_VALUES}"
   sed -i "s|PLACEHOLDER_K8S_ENV|${ENV}|g" "${PROM_VALUES}"
+  # Replace any existing namespace value (handles re-run)
+  sed -i "s|petclinic-dev\|petclinic-prod|${K8S_NAMESPACE}|g" "${PROM_VALUES}" 2>/dev/null || true
   echo "   ✅ monitoring/prometheus-values.yaml → namespace: ${K8S_NAMESPACE}"
 else
   echo "   ⚠️  monitoring/prometheus-values.yaml not found — skipping"
 fi
 
-# Update Grafana root_url and grafana host placeholder
+# Update Grafana root_url — yq by path always overwrites (idempotent)
 GRAFANA_VALUES="${REPO_ROOT}/monitoring/grafana-values.yaml"
 if [ -f "${GRAFANA_VALUES}" ]; then
   yq -i ".\"grafana.ini\".server.root_url = \"https://${GRAFANA_HOST}\"" \
     "${GRAFANA_VALUES}"
-  sed -i "s|PLACEHOLDER_GRAFANA_HOST|${GRAFANA_HOST}|g" "${GRAFANA_VALUES}"
   echo "   ✅ monitoring/grafana-values.yaml → root_url: https://${GRAFANA_HOST}"
 else
   echo "   ⚠️  monitoring/grafana-values.yaml not found — skipping"
@@ -233,6 +251,7 @@ if [ -z "${GITHUB_ORG}" ] || [ -z "${INFRA_REPO}" ]; then
 else
   for f in "${REPO_ROOT}/argocd/applications/${ENV}"/*.yaml; do
     if [ -f "${f}" ]; then
+      # yq by path — always overwrites (idempotent)
       yq -i ".spec.source.repoURL = \"${INFRA_REPO_URL}\"" "${f}"
       echo "   ✅ $(basename "${f}")"
     fi
