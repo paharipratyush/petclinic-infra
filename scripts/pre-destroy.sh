@@ -5,7 +5,7 @@
 # Cleans up resources Terraform doesn't manage:
 #   1. K8s ingresses (causes ALBs to be deleted by LB Controller)
 #   2. Leftover ALBs in the VPC
-#   3. Leftover LB security groups
+#   3. Leftover LB security groups (k8s-* prefix)
 #   4. ECR images (so repos can be deleted by Terraform)
 #
 # Usage:
@@ -16,6 +16,7 @@
 # Must be run before terraform destroy, otherwise:
 #   - ALBs created by the LB Controller block VPC deletion
 #   - ECR repos with images block repo deletion
+#   - k8s-traffic-* SGs left by ALB Controller block VPC deletion
 # ==========================================================
 set -euo pipefail
 
@@ -73,13 +74,19 @@ echo ""
 echo "[1/4] Deleting Kubernetes ingresses..."
 if kubectl cluster-info &>/dev/null 2>&1; then
   kubectl delete ingress --all -n "petclinic-${ENV}" 2>/dev/null \
-    && echo "  ✅ petclinic-${ENV} ingresses deleted" || echo "  ⚠️  No ingresses in petclinic-${ENV}"
+    && echo "  ✅ petclinic-${ENV} ingresses deleted" \
+    || echo "  ⚠️  No ingresses in petclinic-${ENV}"
   kubectl delete ingress --all -n monitoring 2>/dev/null \
-    && echo "  ✅ monitoring ingresses deleted" || echo "  ⚠️  No ingresses in monitoring"
+    && echo "  ✅ monitoring ingresses deleted" \
+    || echo "  ⚠️  No ingresses in monitoring"
   kubectl delete ingress --all -n argocd 2>/dev/null \
-    && echo "  ✅ argocd ingresses deleted" || echo "  ⚠️  No ingresses in argocd"
-  echo "  Waiting 90s for LB Controller to delete ALBs..."
-  sleep 90
+    && echo "  ✅ argocd ingresses deleted" \
+    || echo "  ⚠️  No ingresses in argocd"
+  kubectl delete ingress --all -n tracing 2>/dev/null \
+    && echo "  ✅ tracing ingresses deleted" \
+    || echo "  ⚠️  No ingresses in tracing"
+  echo "  Waiting 120s for LB Controller to delete ALBs..."
+  sleep 120
 else
   echo "  ⚠️  kubectl not connected — skipping ingress deletion"
   echo "     If ALBs exist, delete them manually in AWS Console before terraform destroy"
@@ -112,6 +119,9 @@ else
 fi
 
 # ── Step 3: Delete leftover LB security groups ────────────────────────────────
+# ALB Controller creates SGs with k8s-* and k8s-traffic-* prefixes.
+# These must be deleted before VPC can be destroyed.
+# Uses retry logic because ENI detachment takes time.
 echo ""
 echo "[3/4] Checking for leftover LB security groups (k8s-* prefix)..."
 if [ -n "${VPC_ID}" ]; then
@@ -120,15 +130,35 @@ if [ -n "${VPC_ID}" ]; then
     --filters "Name=vpc-id,Values=${VPC_ID}" \
     --query "SecurityGroups[?starts_with(GroupName,'k8s-')].GroupId" \
     --output text 2>/dev/null || echo "")
+
   if [ -n "${SGS}" ] && [ "${SGS}" != "None" ]; then
+    # Wait for ENI detachments before attempting SG deletion
+    echo "  Waiting 30s for ENIs to detach from SGs..."
+    sleep 30
+
     for SG in ${SGS}; do
       echo "  Deleting SG: ${SG}"
-      aws ec2 delete-security-group \
-        --group-id "${SG}" \
-        --region "${REGION}" 2>/dev/null \
-        || echo "  ⚠️  Could not delete ${SG} (may still have dependencies — retry after a moment)"
+      # Retry up to 3 times with 20s wait between attempts
+      DELETED=false
+      for attempt in 1 2 3; do
+        if aws ec2 delete-security-group \
+          --group-id "${SG}" \
+          --region "${REGION}" 2>/dev/null; then
+          echo "  ✅ Deleted: ${SG}"
+          DELETED=true
+          break
+        else
+          if [ $attempt -lt 3 ]; then
+            echo "  ⚠️  Attempt ${attempt} failed — waiting 20s for dependencies to clear..."
+            sleep 20
+          else
+            echo "  ⚠️  Could not delete ${SG} after 3 attempts"
+            echo "     terraform destroy will handle this SG automatically"
+          fi
+        fi
+      done
     done
-    echo "  ✅ Leftover LB security groups deleted"
+    echo "  ✅ Leftover LB security groups processed"
   else
     echo "  ✅ No leftover LB security groups found"
   fi
@@ -177,7 +207,8 @@ echo "=============================================="
 echo ""
 echo " Now run terraform destroy:"
 echo ""
-echo "   ./scripts/tf.sh ${ENV} destroy"
+echo "   cd terraform/environments/${ENV}"
+echo "   terraform destroy"
 echo ""
 echo " If destroy fails due to security group dependencies,"
 echo " wait 2-3 minutes and retry — AWS takes time to clean up ENIs."
