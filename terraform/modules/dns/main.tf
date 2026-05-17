@@ -1,5 +1,3 @@
-
-
 # ── ACM Wildcard Certificate ──────────────────────────────────────────────────
 resource "aws_acm_certificate" "wildcard" {
   domain_name               = var.domain_name
@@ -16,15 +14,16 @@ resource "aws_acm_certificate" "wildcard" {
 }
 
 # ── ACM validation records in Cloudflare ─────────────────────────────────────
-# Key by resource_record_name (not domain_name) to deduplicate:
-# ACM returns the same CNAME for both praty.dev and *.praty.dev
-# Using domain_name as key creates two resources pointing to the same record ID
-# which causes "Record does not exist" error on destroy
+# Key by domain_name (known at plan time from SANs we define explicitly).
+# ACM returns the same CNAME record for both praty.dev and *.praty.dev,
+# so both Cloudflare records will have identical content.
+# allow_overwrite = true handles this gracefully — Cloudflare deduplicates
+# the actual DNS record while Terraform tracks two state entries.
 resource "cloudflare_record" "acm_validation" {
   for_each = {
     for dvo in aws_acm_certificate.wildcard.domain_validation_options :
-    dvo.resource_record_name => {
-      name  = trimsuffix(dvo.resource_record_name, ".${var.domain_name}.")
+    dvo.domain_name => {
+      name  = trimsuffix(dvo.resource_record_name, ".")
       value = trimsuffix(dvo.resource_record_value, ".")
       type  = dvo.resource_record_type
     }
@@ -37,6 +36,8 @@ resource "cloudflare_record" "acm_validation" {
   ttl             = 60
   proxied         = false
   allow_overwrite = true
+
+  comment = "ACM DNS validation for ${each.key}"
 }
 
 # ── Wait for ACM certificate validation ───────────────────────────────────────
@@ -47,8 +48,7 @@ resource "aws_acm_certificate_validation" "wildcard" {
 
 # ── Application DNS records in Cloudflare ────────────────────────────────────
 resource "cloudflare_record" "app" {
-  count = var.alb_dns_name != "" ? 1 : 0
-
+  count   = var.alb_dns_name != "" ? 1 : 0
   zone_id = var.cloudflare_zone_id
   name    = var.environment == "prod" ? "petclinic" : "petclinic-dev"
   content = var.alb_dns_name
@@ -58,8 +58,7 @@ resource "cloudflare_record" "app" {
 }
 
 resource "cloudflare_record" "grafana" {
-  count = var.monitoring_alb_dns_name != "" ? 1 : 0
-
+  count   = var.monitoring_alb_dns_name != "" ? 1 : 0
   zone_id = var.cloudflare_zone_id
   name    = var.environment == "prod" ? "grafana" : "grafana-dev"
   content = var.monitoring_alb_dns_name
@@ -69,8 +68,7 @@ resource "cloudflare_record" "grafana" {
 }
 
 resource "cloudflare_record" "argocd" {
-  count = var.monitoring_alb_dns_name != "" ? 1 : 0
-
+  count   = var.monitoring_alb_dns_name != "" ? 1 : 0
   zone_id = var.cloudflare_zone_id
   name    = var.environment == "prod" ? "argocd" : "argocd-dev"
   content = var.monitoring_alb_dns_name
@@ -80,8 +78,7 @@ resource "cloudflare_record" "argocd" {
 }
 
 resource "cloudflare_record" "admin" {
-  count = var.alb_dns_name != "" ? 1 : 0
-
+  count   = var.alb_dns_name != "" ? 1 : 0
   zone_id = var.cloudflare_zone_id
   name    = var.environment == "prod" ? "admin" : "admin-dev"
   content = var.alb_dns_name
@@ -91,8 +88,7 @@ resource "cloudflare_record" "admin" {
 }
 
 resource "cloudflare_record" "zipkin" {
-  count = var.monitoring_alb_dns_name != "" ? 1 : 0
-
+  count   = var.monitoring_alb_dns_name != "" ? 1 : 0
   zone_id = var.cloudflare_zone_id
   name    = var.environment == "prod" ? "zipkin" : "zipkin-dev"
   content = var.monitoring_alb_dns_name
