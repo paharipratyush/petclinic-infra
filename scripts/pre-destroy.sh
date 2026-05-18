@@ -3,6 +3,7 @@
 # pre-destroy.sh — Run BEFORE terraform destroy
 #
 # Cleans up resources Terraform doesn't manage:
+#   0. Karpenter-provisioned nodes (EC2 instances)
 #   1. K8s ingresses (causes ALBs to be deleted by LB Controller)
 #   2. Leftover ALBs in the VPC
 #   3. Leftover LB security groups (k8s-* prefix)
@@ -11,23 +12,15 @@
 # Usage:
 #   ./scripts/pre-destroy.sh           # defaults to dev
 #   ./scripts/pre-destroy.sh --env prod
-#   ./scripts/pre-destroy.sh --env dev --region us-west-2
-#
-# Must be run before terraform destroy, otherwise:
-#   - ALBs created by the LB Controller block VPC deletion
-#   - ECR repos with images block repo deletion
-#   - k8s-traffic-* SGs left by ALB Controller block VPC deletion
 # ==========================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-# ── Defaults ──────────────────────────────────────────────────────────────────
 ENV="dev"
 REGION=""
 
-# ── Argument parsing ──────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case $1 in
     --env)    ENV="$2";    shift 2 ;;
@@ -36,7 +29,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# ── Derive region from tfvars if not provided ─────────────────────────────────
 TFVARS="${REPO_ROOT}/terraform/environments/${ENV}/terraform.tfvars"
 if [ -z "${REGION}" ]; then
   if [ -f "${TFVARS}" ]; then
@@ -49,6 +41,7 @@ if [ -z "${REGION}" ]; then
 fi
 
 PROJECT="petclinic"
+TF_DIR="${REPO_ROOT}/terraform/environments/${ENV}"
 
 echo "=============================================="
 echo " Pre-Destroy Cleanup"
@@ -56,8 +49,6 @@ echo " Environment : ${ENV}"
 echo " Region      : ${REGION}"
 echo "=============================================="
 
-# ── Get VPC ID from terraform state ──────────────────────────────────────────
-TF_DIR="${REPO_ROOT}/terraform/environments/${ENV}"
 VPC_ID=""
 if [ -d "${TF_DIR}/.terraform" ]; then
   VPC_ID=$(cd "${TF_DIR}" && terraform output -raw vpc_id 2>/dev/null || echo "")
@@ -69,9 +60,47 @@ else
   echo " VPC ID      : NOT FOUND (terraform state not available)"
 fi
 
-# ── Step 1: Delete K8s ingresses so LB Controller removes ALBs ───────────────
+# ── Step 0: Terminate Karpenter-provisioned nodes ─────────────────────────────
+# Karpenter nodes are NOT in Terraform state — they must be deleted manually.
+# If not deleted, their ENIs block VPC deletion and their SGs block cleanup.
 echo ""
-echo "[1/4] Deleting Kubernetes ingresses..."
+echo "[0/5] Terminating Karpenter-provisioned nodes..."
+if kubectl cluster-info &>/dev/null 2>&1; then
+  NODECLAIMS=$(kubectl get nodeclaim \
+    -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+  if [ -n "${NODECLAIMS}" ]; then
+    echo "  Deleting NodeClaims: ${NODECLAIMS}"
+    kubectl delete nodeclaim --all --timeout=60s 2>/dev/null || true
+    echo "  Waiting 60s for Karpenter to terminate EC2 instances..."
+    sleep 60
+  else
+    echo "  ✅ No NodeClaims found"
+  fi
+fi
+
+# Force terminate any remaining Karpenter EC2 instances via AWS API
+KARPENTER_INSTANCES=$(aws ec2 describe-instances \
+  --region "${REGION}" \
+  --filters "Name=tag:karpenter.sh/nodepool,Values=default" \
+            "Name=instance-state-name,Values=pending,running,stopping" \
+  --query "Reservations[*].Instances[*].InstanceId" \
+  --output text 2>/dev/null || echo "")
+
+if [ -n "${KARPENTER_INSTANCES}" ] && [ "${KARPENTER_INSTANCES}" != "None" ]; then
+  echo "  Force terminating Karpenter instances: ${KARPENTER_INSTANCES}"
+  aws ec2 terminate-instances \
+    --instance-ids ${KARPENTER_INSTANCES} \
+    --region "${REGION}" 2>/dev/null || true
+  echo "  Waiting 45s for instances to terminate..."
+  sleep 45
+  echo "  ✅ Karpenter instances terminated"
+else
+  echo "  ✅ No Karpenter EC2 instances found"
+fi
+
+# ── Step 1: Delete K8s ingresses ──────────────────────────────────────────────
+echo ""
+echo "[1/5] Deleting Kubernetes ingresses..."
 if kubectl cluster-info &>/dev/null 2>&1; then
   kubectl delete ingress --all -n "petclinic-${ENV}" 2>/dev/null \
     && echo "  ✅ petclinic-${ENV} ingresses deleted" \
@@ -89,12 +118,11 @@ if kubectl cluster-info &>/dev/null 2>&1; then
   sleep 120
 else
   echo "  ⚠️  kubectl not connected — skipping ingress deletion"
-  echo "     If ALBs exist, delete them manually in AWS Console before terraform destroy"
 fi
 
-# ── Step 2: Force delete any remaining ALBs in VPC ───────────────────────────
+# ── Step 2: Force delete remaining ALBs ───────────────────────────────────────
 echo ""
-echo "[2/4] Checking for remaining ALBs..."
+echo "[2/5] Checking for remaining ALBs..."
 if [ -n "${VPC_ID}" ]; then
   ALBS=$(aws elbv2 describe-load-balancers \
     --region "${REGION}" \
@@ -105,7 +133,7 @@ if [ -n "${VPC_ID}" ]; then
       echo "  Deleting ALB: ${ARN}"
       aws elbv2 delete-load-balancer \
         --load-balancer-arn "${ARN}" \
-        --region "${REGION}"
+        --region "${REGION}" 2>/dev/null || true
     done
     echo "  Waiting 60s for ALBs to finish deleting..."
     sleep 60
@@ -113,32 +141,22 @@ if [ -n "${VPC_ID}" ]; then
   else
     echo "  ✅ No ALBs found in VPC"
   fi
-else
-  echo "  ⚠️  VPC ID unknown — skipping ALB cleanup"
-  echo "     Check manually: aws elbv2 describe-load-balancers --region ${REGION}"
 fi
 
 # ── Step 3: Delete leftover LB security groups ────────────────────────────────
-# ALB Controller creates SGs with k8s-* and k8s-traffic-* prefixes.
-# These must be deleted before VPC can be destroyed.
-# Uses retry logic because ENI detachment takes time.
 echo ""
-echo "[3/4] Checking for leftover LB security groups (k8s-* prefix)..."
+echo "[3/5] Checking for leftover LB security groups (k8s-* prefix)..."
 if [ -n "${VPC_ID}" ]; then
   SGS=$(aws ec2 describe-security-groups \
     --region "${REGION}" \
     --filters "Name=vpc-id,Values=${VPC_ID}" \
     --query "SecurityGroups[?starts_with(GroupName,'k8s-')].GroupId" \
     --output text 2>/dev/null || echo "")
-
   if [ -n "${SGS}" ] && [ "${SGS}" != "None" ]; then
-    # Wait for ENI detachments before attempting SG deletion
-    echo "  Waiting 30s for ENIs to detach from SGs..."
+    echo "  Waiting 30s for ENIs to detach..."
     sleep 30
-
     for SG in ${SGS}; do
       echo "  Deleting SG: ${SG}"
-      # Retry up to 3 times with 20s wait between attempts
       DELETED=false
       for attempt in 1 2 3; do
         if aws ec2 delete-security-group \
@@ -149,37 +167,27 @@ if [ -n "${VPC_ID}" ]; then
           break
         else
           if [ $attempt -lt 3 ]; then
-            echo "  ⚠️  Attempt ${attempt} failed — waiting 20s for dependencies to clear..."
+            echo "  ⚠️  Attempt ${attempt} failed — waiting 20s..."
             sleep 20
           else
-            echo "  ⚠️  Could not delete ${SG} after 3 attempts"
-            echo "     terraform destroy will handle this SG automatically"
+            echo "  ⚠️  Could not delete ${SG} — terraform destroy will handle it"
           fi
         fi
       done
     done
-    echo "  ✅ Leftover LB security groups processed"
   else
     echo "  ✅ No leftover LB security groups found"
   fi
-else
-  echo "  ⚠️  VPC ID unknown — skipping SG cleanup"
 fi
 
-# ── Step 4: Force delete ECR repos (clears images) ───────────────────────────
+# ── Step 4: Clear ECR repositories ───────────────────────────────────────────
 echo ""
-echo "[4/4] Clearing ECR repositories (deleting images so Terraform can delete repos)..."
+echo "[4/5] Clearing ECR repositories..."
 SERVICES=(
-  "config-server"
-  "discovery-server"
-  "api-gateway"
-  "customers-service"
-  "visits-service"
-  "vets-service"
-  "genai-service"
-  "admin-server"
+  "config-server" "discovery-server" "api-gateway"
+  "customers-service" "visits-service" "vets-service"
+  "genai-service" "admin-server"
 )
-
 for SERVICE in "${SERVICES[@]}"; do
   FULL_REPO="${PROJECT}-${ENV}/${SERVICE}"
   EXISTS=$(aws ecr describe-repositories \
@@ -195,21 +203,16 @@ for SERVICE in "${SERVICES[@]}"; do
       && echo "  ✅ Deleted: ${FULL_REPO}" \
       || echo "  ⚠️  Could not delete: ${FULL_REPO}"
   else
-    echo "  ℹ️  Not found (already deleted): ${FULL_REPO}"
+    echo "  ℹ️  Not found: ${FULL_REPO}"
   fi
 done
 
-# ── Final instructions ────────────────────────────────────────────────────────
 echo ""
 echo "=============================================="
 echo " Pre-destroy cleanup complete!"
 echo "=============================================="
 echo ""
 echo " Now run terraform destroy:"
-echo ""
 echo "   cd terraform/environments/${ENV}"
 echo "   terraform destroy"
-echo ""
-echo " If destroy fails due to security group dependencies,"
-echo " wait 2-3 minutes and retry — AWS takes time to clean up ENIs."
 echo "=============================================="
