@@ -1,18 +1,6 @@
 #!/bin/bash
 # ==========================================================
 # pre-destroy.sh — Run BEFORE terraform destroy
-#
-# Cleans up resources Terraform doesn't manage:
-#   0. Karpenter-provisioned nodes (EC2 instances)
-#   1. K8s ingresses (causes ALBs to be deleted by LB Controller)
-#   2. Leftover ALBs in the VPC
-#   3. Leftover LB security groups (k8s-* prefix)
-#      - Revokes cross-SG references before deleting
-#   4. ECR images (so repos can be deleted by Terraform)
-#
-# Usage:
-#   ./scripts/pre-destroy.sh           # defaults to dev
-#   ./scripts/pre-destroy.sh --env prod
 # ==========================================================
 set -euo pipefail
 
@@ -36,9 +24,7 @@ if [ -z "${REGION}" ]; then
     REGION=$(grep "^aws_region" "${TFVARS}" \
       | sed 's/.*=\s*//' | tr -d '"' | tr -d "'" | tr -d ' ')
   fi
-  if [ -z "${REGION}" ]; then
-    REGION=$(aws configure get region 2>/dev/null || echo "ap-south-1")
-  fi
+  REGION=${REGION:-$(aws configure get region 2>/dev/null || echo "ap-south-1")}
 fi
 
 PROJECT="petclinic"
@@ -55,72 +41,68 @@ if [ -d "${TF_DIR}/.terraform" ]; then
   VPC_ID=$(cd "${TF_DIR}" && terraform output -raw vpc_id 2>/dev/null || echo "")
 fi
 
-if [ -n "${VPC_ID}" ]; then
-  echo " VPC ID      : ${VPC_ID}"
-else
-  echo " VPC ID      : NOT FOUND (terraform state not available)"
-fi
+echo " VPC ID      : ${VPC_ID:-NOT FOUND}"
 
-# ── Step 0: Terminate Karpenter-provisioned nodes ─────────────────────────────
+# ── Step 0: Terminate ALL EC2 instances in VPC ────────────────────────────────
+# Terminates both Karpenter nodes and EKS managed nodes.
+# Must wait for full termination before proceeding — otherwise ENIs block cleanup.
 echo ""
-echo "[0/5] Terminating Karpenter-provisioned nodes..."
+echo "[0/6] Terminating all EC2 instances in VPC..."
+
+# 0a: Delete Karpenter NodeClaims
 if kubectl cluster-info &>/dev/null 2>&1; then
   NODECLAIMS=$(kubectl get nodeclaim \
     -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
   if [ -n "${NODECLAIMS}" ]; then
     echo "  Deleting NodeClaims: ${NODECLAIMS}"
     kubectl delete nodeclaim --all --timeout=60s 2>/dev/null || true
-    echo "  Waiting 60s for Karpenter to terminate EC2 instances..."
-    sleep 60
   else
     echo "  ✅ No NodeClaims found"
   fi
 fi
 
-KARPENTER_INSTANCES=$(aws ec2 describe-instances \
-  --region "${REGION}" \
-  --filters "Name=tag:karpenter.sh/nodepool,Values=default" \
-            "Name=instance-state-name,Values=pending,running,stopping" \
-  --query "Reservations[*].Instances[*].InstanceId" \
-  --output text 2>/dev/null || echo "")
+# 0b: Terminate ALL instances in VPC (Karpenter + managed nodes)
+if [ -n "${VPC_ID}" ]; then
+  ALL_INSTANCES=$(aws ec2 describe-instances \
+    --region "${REGION}" \
+    --filters "Name=vpc-id,Values=${VPC_ID}" \
+              "Name=instance-state-name,Values=pending,running,stopping,shutting-down" \
+    --query "Reservations[*].Instances[*].InstanceId" \
+    --output text 2>/dev/null || echo "")
 
-if [ -n "${KARPENTER_INSTANCES}" ] && [ "${KARPENTER_INSTANCES}" != "None" ]; then
-  echo "  Force terminating Karpenter instances: ${KARPENTER_INSTANCES}"
-  aws ec2 terminate-instances \
-    --instance-ids ${KARPENTER_INSTANCES} \
-    --region "${REGION}" 2>/dev/null || true
-  echo "  Waiting 45s for instances to terminate..."
-  sleep 45
-  echo "  ✅ Karpenter instances terminated"
-else
-  echo "  ✅ No Karpenter EC2 instances found"
+  if [ -n "${ALL_INSTANCES}" ] && [ "${ALL_INSTANCES}" != "None" ]; then
+    echo "  Terminating instances: ${ALL_INSTANCES}"
+    aws ec2 terminate-instances \
+      --instance-ids ${ALL_INSTANCES} \
+      --region "${REGION}" 2>/dev/null || true
+    echo "  Waiting for all instances to terminate (up to 5 min)..."
+    aws ec2 wait instance-terminated \
+      --instance-ids ${ALL_INSTANCES} \
+      --region "${REGION}" 2>/dev/null || true
+    echo "  ✅ All instances terminated"
+  else
+    echo "  ✅ No running instances found"
+  fi
 fi
 
 # ── Step 1: Delete K8s ingresses ──────────────────────────────────────────────
 echo ""
-echo "[1/5] Deleting Kubernetes ingresses..."
+echo "[1/6] Deleting Kubernetes ingresses..."
 if kubectl cluster-info &>/dev/null 2>&1; then
-  kubectl delete ingress --all -n "petclinic-${ENV}" 2>/dev/null \
-    && echo "  ✅ petclinic-${ENV} ingresses deleted" \
-    || echo "  ⚠️  No ingresses in petclinic-${ENV}"
-  kubectl delete ingress --all -n monitoring 2>/dev/null \
-    && echo "  ✅ monitoring ingresses deleted" \
-    || echo "  ⚠️  No ingresses in monitoring"
-  kubectl delete ingress --all -n argocd 2>/dev/null \
-    && echo "  ✅ argocd ingresses deleted" \
-    || echo "  ⚠️  No ingresses in argocd"
-  kubectl delete ingress --all -n tracing 2>/dev/null \
-    && echo "  ✅ tracing ingresses deleted" \
-    || echo "  ⚠️  No ingresses in tracing"
+  for NS in "petclinic-${ENV}" monitoring argocd tracing; do
+    kubectl delete ingress --all -n "${NS}" 2>/dev/null \
+      && echo "  ✅ ${NS} ingresses deleted" \
+      || echo "  ⚠️  No ingresses in ${NS}"
+  done
   echo "  Waiting 120s for LB Controller to delete ALBs..."
   sleep 120
 else
-  echo "  ⚠️  kubectl not connected — skipping ingress deletion"
+  echo "  ⚠️  kubectl not connected — skipping"
 fi
 
 # ── Step 2: Force delete remaining ALBs ───────────────────────────────────────
 echo ""
-echo "[2/5] Checking for remaining ALBs..."
+echo "[2/6] Checking for remaining ALBs..."
 if [ -n "${VPC_ID}" ]; then
   ALBS=$(aws elbv2 describe-load-balancers \
     --region "${REGION}" \
@@ -137,16 +119,49 @@ if [ -n "${VPC_ID}" ]; then
     sleep 60
     echo "  ✅ ALBs deleted"
   else
-    echo "  ✅ No ALBs found in VPC"
+    echo "  ✅ No ALBs found"
   fi
 fi
 
-# ── Step 3: Delete leftover LB security groups ────────────────────────────────
-# ALB Controller creates k8s-* and k8s-traffic-* SGs.
-# These SGs may be referenced by other SGs (cross-SG rules).
-# Must revoke those references before deleting the SG.
+# ── Step 3: Revoke ALL cross-SG ingress rules in VPC ─────────────────────────
+# CRITICAL: Must revoke cross-SG rules BEFORE deleting SGs.
+# Terraform cross-module deletion order is unpredictable — rules added in
+# environments/dev/main.tf may not be revoked before vpc module SGs are deleted.
 echo ""
-echo "[3/5] Checking for leftover LB security groups (k8s-* prefix)..."
+echo "[3/6] Revoking all cross-SG ingress rules in VPC..."
+if [ -n "${VPC_ID}" ]; then
+  ALL_SGS=$(aws ec2 describe-security-groups \
+    --region "${REGION}" \
+    --filters "Name=vpc-id,Values=${VPC_ID}" \
+    --query "SecurityGroups[?GroupName!='default'].GroupId" \
+    --output text 2>/dev/null || echo "")
+
+  for SG in ${ALL_SGS}; do
+    PERMS=$(aws ec2 describe-security-groups \
+      --region "${REGION}" \
+      --group-ids "${SG}" \
+      --query "SecurityGroups[0].IpPermissions[?UserIdGroupPairs[?GroupId!='']]" \
+      --output json 2>/dev/null || echo "[]")
+
+    COUNT=$(echo "${PERMS}" | python3 -c \
+      "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+
+    if [ "${COUNT}" != "0" ] && [ "${PERMS}" != "[]" ]; then
+      echo "  Revoking ${COUNT} cross-SG rule(s) from ${SG}..."
+      aws ec2 revoke-security-group-ingress \
+        --group-id "${SG}" \
+        --ip-permissions "${PERMS}" \
+        --region "${REGION}" 2>/dev/null && \
+        echo "  ✅ Revoked from ${SG}" || \
+        echo "  ⚠️  Could not revoke from ${SG}"
+    fi
+  done
+  echo "  ✅ Cross-SG rules revoked"
+fi
+
+# ── Step 4: Delete leftover k8s-* security groups ────────────────────────────
+echo ""
+echo "[4/6] Checking for leftover LB security groups (k8s-* prefix)..."
 if [ -n "${VPC_ID}" ]; then
   SGS=$(aws ec2 describe-security-groups \
     --region "${REGION}" \
@@ -155,75 +170,52 @@ if [ -n "${VPC_ID}" ]; then
     --output text 2>/dev/null || echo "")
 
   if [ -n "${SGS}" ] && [ "${SGS}" != "None" ]; then
-    echo "  Waiting 30s for ENIs to detach..."
-    sleep 30
-
+    sleep 15
     for SG in ${SGS}; do
-      echo "  Processing SG: ${SG}"
-
-      # Step 3a: Find all OTHER SGs that have inbound rules referencing this SG
-      # and revoke those rules first — otherwise deletion fails with DependencyViolation
-      REFERENCING_SGS=$(aws ec2 describe-security-groups \
-        --region "${REGION}" \
-        --filters "Name=vpc-id,Values=${VPC_ID}" \
-        --query "SecurityGroups[?IpPermissions[?UserIdGroupPairs[?GroupId=='${SG}']]].GroupId" \
-        --output text 2>/dev/null || echo "")
-
-      if [ -n "${REFERENCING_SGS}" ] && [ "${REFERENCING_SGS}" != "None" ]; then
-        for REF_SG in ${REFERENCING_SGS}; do
-          echo "  Revoking inbound rule in ${REF_SG} that references ${SG}..."
-          # Get the full permission set for the referencing rule
-          PERMS=$(aws ec2 describe-security-groups \
-            --region "${REGION}" \
-            --group-ids "${REF_SG}" \
-            --query "SecurityGroups[0].IpPermissions[?UserIdGroupPairs[?GroupId=='${SG}']]" \
-            --output json 2>/dev/null || echo "[]")
-          if [ "${PERMS}" != "[]" ] && [ -n "${PERMS}" ]; then
-            aws ec2 revoke-security-group-ingress \
-              --group-id "${REF_SG}" \
-              --ip-permissions "${PERMS}" \
-              --region "${REGION}" 2>/dev/null && \
-              echo "  ✅ Revoked reference in ${REF_SG}" || \
-              echo "  ⚠️  Could not revoke reference in ${REF_SG}"
-          fi
-        done
-      fi
-
-      # Step 3b: Also revoke egress rules in this SG that reference other SGs
-      EGRESS_REFS=$(aws ec2 describe-security-groups \
-        --region "${REGION}" \
-        --group-ids "${SG}" \
-        --query "SecurityGroups[0].IpPermissionsEgress[?UserIdGroupPairs[?GroupId!='']].UserIdGroupPairs[*].GroupId" \
-        --output text 2>/dev/null || echo "")
-
-      # Step 3c: Delete the SG with retries
-      DELETED=false
       for attempt in 1 2 3; do
         if aws ec2 delete-security-group \
           --group-id "${SG}" \
           --region "${REGION}" 2>/dev/null; then
           echo "  ✅ Deleted: ${SG}"
-          DELETED=true
           break
         else
-          if [ $attempt -lt 3 ]; then
-            echo "  ⚠️  Attempt ${attempt} failed — waiting 20s..."
-            sleep 20
-          else
-            echo "  ⚠️  Could not delete ${SG} — terraform destroy will handle it"
-          fi
+          [ $attempt -lt 3 ] && sleep 15 || \
+            echo "  ⚠️  Could not delete ${SG} — terraform will handle it"
         fi
       done
     done
-    echo "  ✅ Leftover LB security groups processed"
   else
     echo "  ✅ No leftover LB security groups found"
   fi
 fi
 
-# ── Step 4: Clear ECR repositories ───────────────────────────────────────────
+# ── Step 5: Delete any remaining non-default SGs ──────────────────────────────
+# Catches EKS cluster managed SG and any other orphaned SGs
 echo ""
-echo "[4/5] Clearing ECR repositories..."
+echo "[5/6] Cleaning up remaining non-default security groups..."
+if [ -n "${VPC_ID}" ]; then
+  REMAINING_SGS=$(aws ec2 describe-security-groups \
+    --region "${REGION}" \
+    --filters "Name=vpc-id,Values=${VPC_ID}" \
+    --query "SecurityGroups[?GroupName!='default'].GroupId" \
+    --output text 2>/dev/null || echo "")
+
+  if [ -n "${REMAINING_SGS}" ] && [ "${REMAINING_SGS}" != "None" ]; then
+    for SG in ${REMAINING_SGS}; do
+      aws ec2 delete-security-group \
+        --group-id "${SG}" \
+        --region "${REGION}" 2>/dev/null && \
+        echo "  ✅ Deleted: ${SG}" || \
+        echo "  ⚠️  Could not delete ${SG} — terraform will handle it"
+    done
+  else
+    echo "  ✅ No remaining security groups"
+  fi
+fi
+
+# ── Step 6: Clear ECR repositories ───────────────────────────────────────────
+echo ""
+echo "[6/6] Clearing ECR repositories..."
 SERVICES=(
   "config-server" "discovery-server" "api-gateway"
   "customers-service" "visits-service" "vets-service"
