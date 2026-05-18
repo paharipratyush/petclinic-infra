@@ -35,21 +35,14 @@ env:
   - name: MANAGEMENT_METRICS_DISTRIBUTION_SLO_HTTP_SERVER_REQUESTS
     value: "50ms,100ms,200ms,500ms,1s,2s"
 initContainers:
-  - name: wait-for-config-server
+  - name: wait-for-dependencies
     image: busybox:1.36
     command:
       - sh
       - -c
-      - 'until wget -qO- http://config-server:8888/actuator/health; do echo "waiting for config-server..."; sleep 5; done'
-  - name: wait-for-discovery-server
-    image: busybox:1.36
-    command:
-      - sh
-      - -c
-      - 'until wget -qO- http://discovery-server:8761/actuator/health; do echo "waiting for discovery-server..."; sleep 5; done'
-  - name: wait-for-zipkin
-    image: busybox:1.36
-    command:
-      - sh
-      - -c
-      - until wget -qO- http://zipkin.tracing:9411/health; do echo "waiting for zipkin..."; sleep 5; done
+      - |-
+        echo "Waiting for config-server..."
+        until wget -qO- http://config-server:8888/actuator/health 2>/dev/null; do sleep 5; done
+        echo "Config-server ready. Waiting for zipkin..."
+        until wget -qO- http://zipkin.tracing:9411/health 2>/dev/null; do sleep 5; done
+        echo "All dependencies ready!"
