@@ -29,7 +29,6 @@ env:
     value: "50ms,100ms,200ms,500ms,1s,2s"
   - name: SPRING_CLOUD_GATEWAY_METRICS_ENABLED
     value: "true"
-
 initContainers:
   - name: wait-for-dependencies
     image: busybox:1.36

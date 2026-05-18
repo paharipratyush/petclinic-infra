@@ -15,7 +15,7 @@ metadata:
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:482352877891:certificate/0de1f5a9-f38d-4491-8e7a-78abcf119d58
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:482352877891:certificate/58bd0a17-bff0-415e-8551-9b687b858ea7
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
     alb.ingress.kubernetes.io/ssl-redirect: "443"
     alb.ingress.kubernetes.io/group.name: petclinic-app
