@@ -7,6 +7,7 @@
 #   1. K8s ingresses (causes ALBs to be deleted by LB Controller)
 #   2. Leftover ALBs in the VPC
 #   3. Leftover LB security groups (k8s-* prefix)
+#      - Revokes cross-SG references before deleting
 #   4. ECR images (so repos can be deleted by Terraform)
 #
 # Usage:
@@ -61,8 +62,6 @@ else
 fi
 
 # ── Step 0: Terminate Karpenter-provisioned nodes ─────────────────────────────
-# Karpenter nodes are NOT in Terraform state — they must be deleted manually.
-# If not deleted, their ENIs block VPC deletion and their SGs block cleanup.
 echo ""
 echo "[0/5] Terminating Karpenter-provisioned nodes..."
 if kubectl cluster-info &>/dev/null 2>&1; then
@@ -78,7 +77,6 @@ if kubectl cluster-info &>/dev/null 2>&1; then
   fi
 fi
 
-# Force terminate any remaining Karpenter EC2 instances via AWS API
 KARPENTER_INSTANCES=$(aws ec2 describe-instances \
   --region "${REGION}" \
   --filters "Name=tag:karpenter.sh/nodepool,Values=default" \
@@ -144,6 +142,9 @@ if [ -n "${VPC_ID}" ]; then
 fi
 
 # ── Step 3: Delete leftover LB security groups ────────────────────────────────
+# ALB Controller creates k8s-* and k8s-traffic-* SGs.
+# These SGs may be referenced by other SGs (cross-SG rules).
+# Must revoke those references before deleting the SG.
 echo ""
 echo "[3/5] Checking for leftover LB security groups (k8s-* prefix)..."
 if [ -n "${VPC_ID}" ]; then
@@ -152,11 +153,50 @@ if [ -n "${VPC_ID}" ]; then
     --filters "Name=vpc-id,Values=${VPC_ID}" \
     --query "SecurityGroups[?starts_with(GroupName,'k8s-')].GroupId" \
     --output text 2>/dev/null || echo "")
+
   if [ -n "${SGS}" ] && [ "${SGS}" != "None" ]; then
     echo "  Waiting 30s for ENIs to detach..."
     sleep 30
+
     for SG in ${SGS}; do
-      echo "  Deleting SG: ${SG}"
+      echo "  Processing SG: ${SG}"
+
+      # Step 3a: Find all OTHER SGs that have inbound rules referencing this SG
+      # and revoke those rules first — otherwise deletion fails with DependencyViolation
+      REFERENCING_SGS=$(aws ec2 describe-security-groups \
+        --region "${REGION}" \
+        --filters "Name=vpc-id,Values=${VPC_ID}" \
+        --query "SecurityGroups[?IpPermissions[?UserIdGroupPairs[?GroupId=='${SG}']]].GroupId" \
+        --output text 2>/dev/null || echo "")
+
+      if [ -n "${REFERENCING_SGS}" ] && [ "${REFERENCING_SGS}" != "None" ]; then
+        for REF_SG in ${REFERENCING_SGS}; do
+          echo "  Revoking inbound rule in ${REF_SG} that references ${SG}..."
+          # Get the full permission set for the referencing rule
+          PERMS=$(aws ec2 describe-security-groups \
+            --region "${REGION}" \
+            --group-ids "${REF_SG}" \
+            --query "SecurityGroups[0].IpPermissions[?UserIdGroupPairs[?GroupId=='${SG}']]" \
+            --output json 2>/dev/null || echo "[]")
+          if [ "${PERMS}" != "[]" ] && [ -n "${PERMS}" ]; then
+            aws ec2 revoke-security-group-ingress \
+              --group-id "${REF_SG}" \
+              --ip-permissions "${PERMS}" \
+              --region "${REGION}" 2>/dev/null && \
+              echo "  ✅ Revoked reference in ${REF_SG}" || \
+              echo "  ⚠️  Could not revoke reference in ${REF_SG}"
+          fi
+        done
+      fi
+
+      # Step 3b: Also revoke egress rules in this SG that reference other SGs
+      EGRESS_REFS=$(aws ec2 describe-security-groups \
+        --region "${REGION}" \
+        --group-ids "${SG}" \
+        --query "SecurityGroups[0].IpPermissionsEgress[?UserIdGroupPairs[?GroupId!='']].UserIdGroupPairs[*].GroupId" \
+        --output text 2>/dev/null || echo "")
+
+      # Step 3c: Delete the SG with retries
       DELETED=false
       for attempt in 1 2 3; do
         if aws ec2 delete-security-group \
@@ -175,6 +215,7 @@ if [ -n "${VPC_ID}" ]; then
         fi
       done
     done
+    echo "  ✅ Leftover LB security groups processed"
   else
     echo "  ✅ No leftover LB security groups found"
   fi
