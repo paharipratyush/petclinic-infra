@@ -8,9 +8,6 @@
 #   ./scripts/tf.sh dev plan
 #   ./scripts/tf.sh dev apply
 #   ./scripts/tf.sh prod plan
-#
-# This script always runs from the correct directory and uses
-# the correct backend config path — no path confusion possible.
 # ============================================================
 
 set -euo pipefail
@@ -23,11 +20,6 @@ CMD="${2:-}"
 
 if [ -z "${ENV}" ] || [ -z "${CMD}" ]; then
   echo "Usage: ./scripts/tf.sh <dev|prod> <init|validate|plan|apply|destroy>"
-  echo ""
-  echo "Examples:"
-  echo "  ./scripts/tf.sh dev init"
-  echo "  ./scripts/tf.sh dev plan"
-  echo "  ./scripts/tf.sh prod validate"
   exit 1
 fi
 
@@ -65,6 +57,10 @@ case "${CMD}" in
     terraform validate
     ;;
   plan)
+    # Run pre-apply-check BEFORE planning so imports are in state
+    echo "Running pre-apply checks..."
+    "${SCRIPT_DIR}/pre-apply-check.sh" "${ENV}"
+    echo ""
     terraform plan -out="${REPO_ROOT}/plan.out"
     echo ""
     echo "Plan saved to: ${REPO_ROOT}/plan.out"
@@ -72,12 +68,23 @@ case "${CMD}" in
     ;;
   apply)
     if [ -f "${REPO_ROOT}/plan.out" ]; then
+      # Verify plan.out is not stale (older than 30 minutes)
+      PLAN_AGE=$(( $(date +%s) - $(stat -c %Y "${REPO_ROOT}/plan.out" 2>/dev/null || echo 0) ))
+      if [ "${PLAN_AGE}" -gt 1800 ]; then
+        echo "⚠️  Saved plan is older than 30 minutes — regenerating..."
+        rm -f "${REPO_ROOT}/plan.out"
+        "${SCRIPT_DIR}/pre-apply-check.sh" "${ENV}"
+        terraform plan -out="${REPO_ROOT}/plan.out"
+      fi
       terraform apply "${REPO_ROOT}/plan.out"
       rm -f "${REPO_ROOT}/plan.out"
     else
-      echo "ERROR: No saved plan found at ${REPO_ROOT}/plan.out"
-      echo "Run first: ./scripts/tf.sh ${ENV} plan"
-      exit 1
+      # No saved plan — run pre-apply-check then fresh plan+apply
+      echo "No saved plan found — running pre-apply checks and fresh plan..."
+      "${SCRIPT_DIR}/pre-apply-check.sh" "${ENV}"
+      terraform plan -out="${REPO_ROOT}/plan.out"
+      terraform apply "${REPO_ROOT}/plan.out"
+      rm -f "${REPO_ROOT}/plan.out"
     fi
     ;;
   destroy)
@@ -93,7 +100,6 @@ case "${CMD}" in
     fi
     ;;
   *)
-    # Pass through any other terraform command directly
     terraform "${CMD}"
     ;;
 esac
