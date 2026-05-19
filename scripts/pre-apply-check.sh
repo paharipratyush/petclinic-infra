@@ -21,31 +21,44 @@ cd "${TF_DIR}"
 # ── Check 1: GitHub OIDC Provider ────────────────────────────────────────────
 echo ""
 echo "[1/2] Checking GitHub OIDC Provider..."
-OIDC_ARN="arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):oidc-provider/token.actions.githubusercontent.com"
-OIDC_EXISTS=$(aws iam get-open-id-connect-provider \
-  --open-id-connect-provider-arn "${OIDC_ARN}" \
-  --query "Url" --output text 2>/dev/null || echo "")
 
-if [ -n "${OIDC_EXISTS}" ]; then
-  # Check if already in state
-  IN_STATE=$(terraform state list 2>/dev/null | \
-    grep "github_oidc.aws_iam_openid_connect_provider" || echo "")
-  if [ -z "${IN_STATE}" ]; then
-    echo "  ⚠️  GitHub OIDC provider exists but not in state — importing..."
-    terraform import \
-      'module.github_oidc.aws_iam_openid_connect_provider.github[0]' \
-      "${OIDC_ARN}"
-    echo "  ✅ Imported GitHub OIDC provider"
-  else
-    echo "  ✅ GitHub OIDC provider in state — no action needed"
-  fi
+# Check if this environment manages OIDC provider creation.
+# Prod sets create_oidc_provider = false — OIDC is shared from dev.
+# Skip import attempt when create_oidc_provider = false.
+CREATE_OIDC=$(grep "create_oidc_provider" "${TF_DIR}/main.tf" \
+  2>/dev/null | grep -v "^#" | grep "false" || echo "")
+
+if [ -n "${CREATE_OIDC}" ]; then
+  echo "  ✅ create_oidc_provider = false — OIDC shared from dev, skipping import"
 else
-  echo "  ✅ GitHub OIDC provider does not exist — will be created"
+  OIDC_ARN="arn:aws:iam::$(aws sts get-caller-identity \
+    --query Account --output text):oidc-provider/token.actions.githubusercontent.com"
+
+  OIDC_EXISTS=$(aws iam get-open-id-connect-provider \
+    --open-id-connect-provider-arn "${OIDC_ARN}" \
+    --query "Url" --output text 2>/dev/null || echo "")
+
+  if [ -n "${OIDC_EXISTS}" ]; then
+    IN_STATE=$(terraform state list 2>/dev/null | \
+      grep "github_oidc.aws_iam_openid_connect_provider" || echo "")
+    if [ -z "${IN_STATE}" ]; then
+      echo "  ⚠️  GitHub OIDC provider exists but not in state — importing..."
+      terraform import \
+        'module.github_oidc.aws_iam_openid_connect_provider.github[0]' \
+        "${OIDC_ARN}"
+      echo "  ✅ Imported GitHub OIDC provider"
+    else
+      echo "  ✅ GitHub OIDC provider in state — no action needed"
+    fi
+  else
+    echo "  ✅ GitHub OIDC provider does not exist — will be created"
+  fi
 fi
 
 # ── Check 2: EKS Access Entry (only if cluster exists) ────────────────────────
 echo ""
 echo "[2/2] Checking EKS Access Entry..."
+
 CLUSTER_NAME="${PROJECT:-petclinic}-${ENV}"
 REGION=$(grep "^aws_region" "${TF_DIR}/terraform.tfvars" \
   | sed 's/.*=\s*//' | tr -d '"' | tr -d "'" | tr -d ' ' 2>/dev/null \
@@ -66,7 +79,6 @@ if [ -n "${CLUSTER_EXISTS}" ]; then
     --region "${REGION}" \
     --query "accessEntries[?contains(@,'${IAM_USER}')]" \
     --output text 2>/dev/null || echo "")
-
   if [ -n "${ACCESS_ENTRY}" ]; then
     IN_STATE=$(terraform state list 2>/dev/null | \
       grep "eks.aws_eks_access_entry.admin" || echo "")
