@@ -113,7 +113,6 @@ helm repo update
 if helm_release_healthy "external-secrets" "external-secrets" 1; then
   echo "  ✅ ESO already running and healthy — skipping install"
 else
-  # Clean up any stuck/failed release before installing
   HELM_STATUS=$(helm status external-secrets -n external-secrets \
     --output json 2>/dev/null | python3 -c \
     "import json,sys; print(json.load(sys.stdin)['info']['status'])" \
@@ -127,7 +126,6 @@ else
     sleep 5
   fi
 
-  # Fix any stale CRD storedVersions before installing
   for CRD in \
     clusterexternalsecrets.external-secrets.io \
     clustersecretstores.external-secrets.io \
@@ -203,8 +201,6 @@ kubectl get applications -n argocd 2>/dev/null || true
 
 # ── Schema init order fix ─────────────────────────────────────────────────────
 # visits table has FK: visits.pet_id → pets.id (created by customers-service).
-# If visits-service starts before customers-service schema is initialized,
-# it crashes with "Failed to open the referenced table 'pets'".
 echo "  Waiting for customers-service to be ready (DB schema init order)..."
 kubectl wait --for=condition=ready pod \
   -l app.kubernetes.io/name=customers-service \
@@ -255,10 +251,6 @@ else
   echo "  ✅ Karpenter installed (v1.1.1)"
 fi
 
-# Apply NodePool and EC2NodeClass with env-specific values.
-# nodepool.yaml has hardcoded petclinic-dev values — inject correct env
-# values using sed before applying so each environment gets the right
-# subnet/SG selectors and instance profile.
 echo "  Applying NodePool and EC2NodeClass for ${ENV}..."
 sed \
   -e "s|karpenter.sh/discovery: petclinic-dev|karpenter.sh/discovery: ${CLUSTER_NAME}|g" \
@@ -318,7 +310,57 @@ helm upgrade --install grafana grafana/grafana \
   -f "${REPO_ROOT}/monitoring/grafana-values.yaml" \
   --wait --timeout 10m
 
-echo "  Applying Alertmanager..."
+# ── Alertmanager — inject credentials from Secrets Manager ───────────────────
+# Config stored as K8s Secret with placeholders — real credentials fetched
+# from AWS Secrets Manager at deploy time. Never committed to Git.
+echo "  Configuring Alertmanager..."
+AM_SECRET_ID="petclinic/${ENV}/alertmanager-email"
+
+if aws secretsmanager describe-secret \
+  --secret-id "${AM_SECRET_ID}" \
+  --region "${AWS_REGION}" &>/dev/null 2>&1; then
+
+  AM_SECRET_VAL=$(aws secretsmanager get-secret-value \
+    --secret-id "${AM_SECRET_ID}" \
+    --region "${AWS_REGION}" \
+    --query "SecretString" --output text 2>/dev/null || echo "")
+
+  if [ -n "${AM_SECRET_VAL}" ]; then
+    AM_EMAIL=$(echo "${AM_SECRET_VAL}" | python3 -c \
+      "import json,sys; print(json.load(sys.stdin)['email'])" 2>/dev/null || echo "")
+    AM_PASSWORD=$(echo "${AM_SECRET_VAL}" | python3 -c \
+      "import json,sys; print(json.load(sys.stdin)['app_password'])" 2>/dev/null || echo "")
+
+    if [ -n "${AM_EMAIL}" ] && [ -n "${AM_PASSWORD}" ]; then
+      AM_CONFIG=$(sed \
+        -e "s|ALERTMANAGER_EMAIL_PLACEHOLDER|${AM_EMAIL}|g" \
+        -e "s|ALERTMANAGER_PASSWORD_PLACEHOLDER|${AM_PASSWORD}|g" \
+        "${REPO_ROOT}/monitoring/alertmanager.yaml" | \
+        awk '/^  alertmanager\.yml: \|/{found=1; next} \
+             found && /^---/{exit} \
+             found{print substr($0,5)}')
+
+      kubectl delete secret alertmanager-config \
+        -n monitoring 2>/dev/null || true
+      kubectl create secret generic alertmanager-config \
+        -n monitoring \
+        --from-literal="alertmanager.yml=${AM_CONFIG}"
+      echo "  ✅ Alertmanager credentials injected from Secrets Manager"
+    else
+      echo "  ⚠️  Could not parse alertmanager credentials"
+    fi
+  fi
+else
+  echo "  ⚠️  Alertmanager secret not found: ${AM_SECRET_ID}"
+  echo "      Create it with:"
+  echo "      aws secretsmanager create-secret \\"
+  echo "        --name ${AM_SECRET_ID} \\"
+  echo "        --secret-string '{\"email\":\"your@gmail.com\",\"app_password\":\"xxxx xxxx xxxx xxxx\"}' \\"
+  echo "        --region ${AWS_REGION}"
+fi
+
+# Apply alertmanager manifest (Deployment, Service, PVC)
+# The Secret was already created above with real credentials
 kubectl apply -f "${REPO_ROOT}/monitoring/alertmanager.yaml"
 
 echo "  Applying Zipkin..."
@@ -369,7 +411,7 @@ echo "   2. Inject dynamic config (ECR URLs, RDS endpoint, cert ARN, domains):"
 echo "      ./scripts/generate-config.sh ${ENV}"
 echo ""
 echo "   3. Commit and push so ArgoCD picks up the config:"
-echo "      git add helm-values/ k8s/ monitoring/ argocd/"
+echo "      git add helm-values/${ENV}/ k8s/ monitoring/ argocd/"
 echo "      git commit -m 'config: update dynamic values for ${ENV}'"
 echo "      git push"
 echo ""

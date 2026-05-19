@@ -18,7 +18,7 @@ spec:
     helm:
       releaseName: admin-server
       valueFiles:
-        - ../../helm-values/admin-server.yaml
+        - ../../helm-values/prod/admin-server.yaml
         - ../../helm-values/prod.yaml
   destination:
     server: https://kubernetes.default.svc

@@ -164,11 +164,16 @@ echo " All images pushed successfully!"
 echo " Registry : ${ECR_REGISTRY}/petclinic-${ENVIRONMENT}/"
 echo " Tag      : ${TAG}"
 
-# ── Auto-update helm-values image tags ───────────────────────────────────────
-# Automatically update helm-values/{service}.yaml with the pushed tag so
-# ArgoCD deploys the correct image without requiring a separate manual step.
+# ── Auto-update helm-values/{env}/ image tags ────────────────────────────────
+# Updates helm-values/{env}/{service}.yaml with the pushed tag.
+# Dev and prod are now separate directories — no cross-contamination.
+# CI/CD (update-image-tags.yml) also updates helm-values/dev/ automatically.
+# This local update is for manual builds via build-push-images.sh.
 echo ""
-echo " Auto-updating helm-values image tags to ${TAG}..."
+echo " Auto-updating helm-values/${ENVIRONMENT}/ image tags to ${TAG}..."
+
+HELM_VALUES_ENV_DIR="${REPO_ROOT}/helm-values/${ENVIRONMENT}"
+
 SERVICES_LIST=(
   "config-server" "discovery-server" "api-gateway"
   "customers-service" "visits-service" "vets-service"
@@ -176,16 +181,18 @@ SERVICES_LIST=(
 )
 UPDATED=0
 for SERVICE in "${SERVICES_LIST[@]}"; do
-  FILE="${REPO_ROOT}/helm-values/${SERVICE}.yaml"
+  FILE="${HELM_VALUES_ENV_DIR}/${SERVICE}.yaml"
   if [ -f "${FILE}" ]; then
     CURRENT_TAG=$(yq '.image.tag' "${FILE}" 2>/dev/null || echo "")
     if [ "${CURRENT_TAG}" != "${TAG}" ]; then
       yq -i ".image.tag = \"${TAG}\"" "${FILE}"
-      echo "   ✅ helm-values/${SERVICE}.yaml: ${CURRENT_TAG} → ${TAG}"
+      echo "   ✅ helm-values/${ENVIRONMENT}/${SERVICE}.yaml: ${CURRENT_TAG} → ${TAG}"
       UPDATED=$((UPDATED + 1))
     else
-      echo "   ✅ helm-values/${SERVICE}.yaml: already ${TAG}"
+      echo "   ✅ helm-values/${ENVIRONMENT}/${SERVICE}.yaml: already ${TAG}"
     fi
+  else
+    echo "   ⚠️  helm-values/${ENVIRONMENT}/${SERVICE}.yaml not found — skipping"
   fi
 done
 
@@ -194,7 +201,7 @@ if [ "${UPDATED}" -gt 0 ]; then
   echo " ⚠️  ${UPDATED} helm-values file(s) updated."
   echo "    Commit and push so ArgoCD picks up the new tags:"
   echo ""
-  echo "   git add helm-values/"
+  echo "   git add helm-values/${ENVIRONMENT}/"
   echo "   git commit -m 'config: update image tags to ${TAG}'"
   echo "   git push"
 fi

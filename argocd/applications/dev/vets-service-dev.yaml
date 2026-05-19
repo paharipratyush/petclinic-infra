@@ -14,7 +14,7 @@ spec:
     helm:
       releaseName: vets-service
       valueFiles:
-        - ../../helm-values/vets-service.yaml
+        - ../../helm-values/dev/vets-service.yaml
         - ../../helm-values/dev.yaml
   destination:
     server: https://kubernetes.default.svc

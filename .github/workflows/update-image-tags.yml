@@ -2,33 +2,26 @@
 # update-image-tags.yml — Update Helm values with new image tags
 #
 # Triggered by repository_dispatch from the app repo after images
-# are built and pushed to ECR. Updates helm-values/{service}.yaml
+# are built and pushed to ECR. Updates helm-values/dev/{service}.yaml
 # with the new image tag so ArgoCD detects the change and deploys.
 #
-# This is the CD trigger in the GitOps pipeline:
+# GitOps pipeline:
 #   App repo CI builds → dispatches event → this workflow commits
-#   → ArgoCD detects Git change → syncs cluster
+#   → ArgoCD detects Git change → syncs dev (auto) / prod (manual)
 #
 # Trigger: repository_dispatch event type 'app-image-built'
 # Payload:
 #   sha      — 7-character commit SHA (matches ECR image tag)
 #   services — space-separated list of services that changed
-#              (only these get updated — not all 8)
-#
-# Required secret: GITHUB_TOKEN (automatic, no setup needed)
 # ============================================================
-
 name: Update Image Tags
-
 on:
   repository_dispatch:
     types: [app-image-built]
-
 jobs:
   update-tags:
     name: Update image tags for changed services
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout infra repo
         uses: actions/checkout@v4
@@ -42,7 +35,7 @@ jobs:
           chmod +x /usr/local/bin/yq
           yq --version
 
-      - name: Update image tags in helm-values
+      - name: Update image tags in helm-values/dev
         env:
           SHA: ${{ github.event.client_payload.sha }}
           SERVICES: ${{ github.event.client_payload.services }}
@@ -54,7 +47,6 @@ jobs:
             echo "ERROR: No SHA in dispatch payload"
             exit 1
           fi
-
           if [ -z "${SERVICES}" ]; then
             echo "ERROR: No services in dispatch payload"
             exit 1
@@ -64,7 +56,8 @@ jobs:
           SKIPPED=()
 
           for SERVICE in ${SERVICES}; do
-            FILE="helm-values/${SERVICE}.yaml"
+            # Update dev helm-values only — prod uses manual approval
+            FILE="helm-values/dev/${SERVICE}.yaml"
             if [ -f "${FILE}" ]; then
               CURRENT_TAG=$(yq '.image.tag' "${FILE}")
               yq -i ".image.tag = \"${SHA}\"" "${FILE}"
@@ -77,8 +70,8 @@ jobs:
           done
 
           echo ""
-          echo "Updated  : ${UPDATED[*]:-none}"
-          echo "Skipped  : ${SKIPPED[*]:-none}"
+          echo "Updated : ${UPDATED[*]:-none}"
+          echo "Skipped : ${SKIPPED[*]:-none}"
 
       - name: Commit and push updated tags
         env:
@@ -87,22 +80,15 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add helm-values/
-
-          # Only commit if there are actual changes
+          git add helm-values/dev/
           if git diff --staged --quiet; then
-            echo "No changes to commit — tags may already be up to date"
+            echo "No changes to commit — tags already up to date"
             exit 0
           fi
-
-          # Build service list for commit message
           SERVICE_LIST=$(echo "${SERVICES}" | tr ' ' ',')
-
           git commit -m "ci: update image tags to ${SHA} (${SERVICE_LIST})"
           git push
-
           echo ""
           echo "✅ Committed and pushed image tag updates"
-          echo "   ArgoCD will now detect the change and sync dev (auto)"
+          echo "   ArgoCD dev will auto-sync within 3 minutes"
           echo "   Prod requires manual approval in ArgoCD UI"

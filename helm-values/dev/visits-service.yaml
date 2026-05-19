@@ -1,0 +1,46 @@
+image:
+  # Filled automatically by scripts/generate-config.sh after terraform apply
+  repository: 482352877891.dkr.ecr.ap-south-1.amazonaws.com/petclinic-dev/visits-service
+  tag: v1.0.0
+service:
+  port: 8082
+replicaCount: 2
+env:
+  - name: SPRING_PROFILES_ACTIVE
+    value: "docker,mysql"
+  - name: CONFIG_SERVER_URL
+    value: "http://config-server:8888"
+  - name: SPRING_DATASOURCE_URL
+    value: "jdbc:mysql://petclinic-dev-mysql.cbsumcwgg4sm.ap-south-1.rds.amazonaws.com:3306/petclinic"
+  - name: SPRING_DATASOURCE_USERNAME
+    valueFrom:
+      secretKeyRef:
+        name: rds-credentials
+        key: username
+  - name: SPRING_DATASOURCE_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: rds-credentials
+        key: password
+  - name: MANAGEMENT_ZIPKIN_TRACING_ENDPOINT
+    value: "http://zipkin.tracing:9411/api/v2/spans"
+  - name: MANAGEMENT_TRACING_EXPORT_ZIPKIN_ENDPOINT
+    value: "http://zipkin.tracing:9411/api/v2/spans"
+  - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
+    value: "1.0"
+  - name: MANAGEMENT_METRICS_DISTRIBUTION_PERCENTILESHISTOGRAM_HTTP_SERVER_REQUESTS
+    value: "true"
+  - name: MANAGEMENT_METRICS_DISTRIBUTION_SLO_HTTP_SERVER_REQUESTS
+    value: "50ms,100ms,200ms,500ms,1s,2s"
+initContainers:
+  - name: wait-for-dependencies
+    image: busybox:1.36
+    command:
+      - sh
+      - -c
+      - |-
+        echo "Waiting for config-server..."
+        until wget -qO- http://config-server:8888/actuator/health 2>/dev/null; do sleep 5; done
+        echo "Config-server ready. Waiting for zipkin..."
+        until wget -qO- http://zipkin.tracing:9411/health 2>/dev/null; do sleep 5; done
+        echo "All dependencies ready!"

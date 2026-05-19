@@ -21,6 +21,25 @@ echo "=============================================="
 echo " generate-config.sh — environment: ${ENV}"
 echo "=============================================="
 
+# ── Safety warning ────────────────────────────────────────────────────────────
+# Warn if generating prod config while kubectl points to dev cluster.
+# This prevents accidentally deploying prod images to dev via ArgoCD.
+CURRENT_CONTEXT=$(kubectl config current-context 2>/dev/null || echo "unknown")
+echo ""
+echo " Current kubectl context: ${CURRENT_CONTEXT}"
+if [ "${ENV}" = "prod" ] && echo "${CURRENT_CONTEXT}" | grep -q "petclinic-dev"; then
+  echo ""
+  echo " ⚠️  WARNING: Generating PROD config but kubectl points to DEV cluster!"
+  echo " ⚠️  Switch kubectl to prod after committing:"
+  echo "     aws eks update-kubeconfig --name petclinic-prod --region ap-south-1"
+  echo ""
+  read -r -p " Continue anyway? (yes/no): " CONFIRM
+  if [ "${CONFIRM}" != "yes" ]; then
+    echo " Aborted."
+    exit 1
+  fi
+fi
+
 TFVARS="${TF_DIR}/terraform.tfvars"
 if [ ! -f "${TFVARS}" ]; then
   echo "ERROR: ${TFVARS} not found."
@@ -56,12 +75,14 @@ fi
 
 INFRA_REPO_URL="https://github.com/${GITHUB_ORG}/${INFRA_REPO}.git"
 K8S_NAMESPACE="petclinic-${ENV}"
+HELM_VALUES_DIR="${REPO_ROOT}/helm-values/${ENV}"
 
 echo ""
-echo " Domain      : ${DOMAIN}"
-echo " GitHub Org  : ${GITHUB_ORG:-NOT SET}"
-echo " Infra Repo  : ${INFRA_REPO:-NOT SET}"
-echo " K8s NS      : ${K8S_NAMESPACE}"
+echo " Domain         : ${DOMAIN}"
+echo " GitHub Org     : ${GITHUB_ORG:-NOT SET}"
+echo " Infra Repo     : ${INFRA_REPO:-NOT SET}"
+echo " K8s NS         : ${K8S_NAMESPACE}"
+echo " Helm Values Dir: ${HELM_VALUES_DIR}"
 echo ""
 echo " Subdomains:"
 echo "   App     : https://${PETCLINIC_HOST}"
@@ -92,6 +113,9 @@ echo "   Cert ARN    : ${CERT_ARN:-NOT FOUND}"
 echo "   ECR Registry: ${ECR_REGISTRY}"
 echo "   ESO Role ARN: ${ESO_ROLE_ARN:-NOT FOUND}"
 
+# Ensure env-specific helm-values directory exists
+mkdir -p "${HELM_VALUES_DIR}"
+
 SERVICES=(
   "config-server"
   "discovery-server"
@@ -105,12 +129,14 @@ SERVICES=(
 
 # ── [2] Update ECR image repositories ────────────────────────────────────────
 echo ""
-echo "[2/8] Updating ECR image repository URLs in helm-values/..."
+echo "[2/8] Updating ECR image repository URLs in helm-values/${ENV}/..."
 for SERVICE in "${SERVICES[@]}"; do
-  FILE="${REPO_ROOT}/helm-values/${SERVICE}.yaml"
+  FILE="${HELM_VALUES_DIR}/${SERVICE}.yaml"
   if [ -f "${FILE}" ]; then
     yq -i ".image.repository = \"${ECR_REGISTRY}/petclinic-${ENV}/${SERVICE}\"" "${FILE}"
-    echo "   ✅ helm-values/${SERVICE}.yaml → ${ECR_REGISTRY}/petclinic-${ENV}/${SERVICE}"
+    echo "   ✅ helm-values/${ENV}/${SERVICE}.yaml → ${ECR_REGISTRY}/petclinic-${ENV}/${SERVICE}"
+  else
+    echo "   ⚠️  helm-values/${ENV}/${SERVICE}.yaml not found — skipping"
   fi
 done
 
@@ -119,15 +145,15 @@ echo ""
 echo "[3/8] Checking and resetting stale SHA image tags..."
 TAGS_RESET=0
 for SERVICE in "${SERVICES[@]}"; do
-  FILE="${REPO_ROOT}/helm-values/${SERVICE}.yaml"
+  FILE="${HELM_VALUES_DIR}/${SERVICE}.yaml"
   if [ -f "${FILE}" ]; then
     CURRENT_TAG=$(yq '.image.tag' "${FILE}" 2>/dev/null || echo "")
     if echo "${CURRENT_TAG}" | grep -qE '^[0-9a-f]{7}$'; then
       yq -i '.image.tag = "v1.0.0"' "${FILE}"
-      echo "   ✅ helm-values/${SERVICE}.yaml: ${CURRENT_TAG} → v1.0.0 (stale SHA reset)"
+      echo "   ✅ helm-values/${ENV}/${SERVICE}.yaml: ${CURRENT_TAG} → v1.0.0 (stale SHA reset)"
       TAGS_RESET=$((TAGS_RESET + 1))
     else
-      echo "   ✅ helm-values/${SERVICE}.yaml: tag=${CURRENT_TAG} (no change)"
+      echo "   ✅ helm-values/${ENV}/${SERVICE}.yaml: tag=${CURRENT_TAG} (no change)"
     fi
   fi
 done
@@ -142,12 +168,12 @@ if [ -z "${JDBC_URL}" ]; then
   echo "   ⚠️  Skipping — no rds_jdbc_url output found"
 else
   for SERVICE in customers-service visits-service vets-service; do
-    FILE="${REPO_ROOT}/helm-values/${SERVICE}.yaml"
+    FILE="${HELM_VALUES_DIR}/${SERVICE}.yaml"
     if [ -f "${FILE}" ]; then
       yq -i \
         "(.env[] | select(.name == \"SPRING_DATASOURCE_URL\") | .value) = \"${JDBC_URL}\"" \
         "${FILE}"
-      echo "   ✅ helm-values/${SERVICE}.yaml → ${JDBC_URL}"
+      echo "   ✅ helm-values/${ENV}/${SERVICE}.yaml → ${JDBC_URL}"
     fi
   done
 fi
@@ -170,7 +196,7 @@ if [ -f "${APP_INGRESS}" ]; then
   echo "      ${ADMIN_HOST} → admin-server"
 fi
 
-# ── [6] Update monitoring ingress cert ARN + hostnames ───────────────────────
+# ── [6] Update monitoring ingress ────────────────────────────────────────────
 echo ""
 echo "[6/8] Updating monitoring ingress (cert ARN + hostnames)..."
 MONITORING_INGRESS="${REPO_ROOT}/monitoring/monitoring-ingress.yaml"
@@ -200,17 +226,15 @@ if [ -f "${MONITORING_INGRESS}" ]; then
   echo "      ${ZIPKIN_HOST} → zipkin"
 fi
 
-# ── [7] Update Prometheus scrape namespace and alert rules ────────────────────
+# ── [7] Update Prometheus scrape namespace and Grafana root_url ──────────────
 echo ""
 echo "[7/8] Updating Prometheus scrape namespace and Grafana root_url..."
 PROM_VALUES="${REPO_ROOT}/monitoring/prometheus-values.yaml"
 if [ -f "${PROM_VALUES}" ]; then
   sed -i "s|PLACEHOLDER_K8S_NAMESPACE|${K8S_NAMESPACE}|g" "${PROM_VALUES}"
   sed -i "s|PLACEHOLDER_K8S_ENV|${ENV}|g" "${PROM_VALUES}"
-  # Replace namespace in scrape targets (e.g. api-gateway.petclinic-dev:8080)
   sed -i "s|\.petclinic-dev:|\.${K8S_NAMESPACE}:|g" "${PROM_VALUES}"
   sed -i "s|\.petclinic-prod:|\.${K8S_NAMESPACE}:|g" "${PROM_VALUES}"
-  # Replace namespace in alert rule expressions (e.g. namespace=~"petclinic-dev")
   sed -i \
     "s|namespace=~\"petclinic-dev\"|namespace=~\"${K8S_NAMESPACE}\"|g" \
     "${PROM_VALUES}"
@@ -262,14 +286,14 @@ echo "=============================================="
 echo " Done! Review all changes before pushing:"
 echo "=============================================="
 echo ""
-echo "  git diff helm-values/"
+echo "  git diff helm-values/${ENV}/"
 echo "  git diff k8s/"
 echo "  git diff monitoring/"
 echo "  git diff argocd/applications/${ENV}/"
 echo ""
-echo " Then commit and push so ArgoCD picks up the changes:"
+echo " Then commit and push:"
 echo ""
-echo "  git add helm-values/ k8s/ monitoring/ argocd/"
+echo "  git add helm-values/${ENV}/ k8s/ monitoring/ argocd/"
 echo "  git commit -m 'config: update dynamic values for ${ENV}'"
 echo "  git push"
 echo "=============================================="

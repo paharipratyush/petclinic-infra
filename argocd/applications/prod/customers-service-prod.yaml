@@ -18,7 +18,7 @@ spec:
     helm:
       releaseName: customers-service
       valueFiles:
-        - ../../helm-values/customers-service.yaml
+        - ../../helm-values/prod/customers-service.yaml
         - ../../helm-values/prod.yaml
   destination:
     server: https://kubernetes.default.svc
