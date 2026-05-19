@@ -114,7 +114,7 @@ for SERVICE in "${SERVICES[@]}"; do
   fi
 done
 
-# ── [2b] Reset SHA image tags to v1.0.0 on fresh cluster deploy ──────────────
+# ── [3] Reset SHA image tags to v1.0.0 on fresh cluster deploy ───────────────
 # On a fresh cluster after destroy+recreate, CI/CD SHA tags from the previous
 # cluster no longer exist in the new ECR repos. Only v1.0.0 (from
 # build-push-images.sh) exists. Detect SHA tags (7 hex chars) and reset them.
@@ -139,7 +139,7 @@ if [ "${TAGS_RESET}" -gt 0 ]; then
   echo "      These SHA images no longer exist in the new ECR repos."
 fi
 
-# ── [3] Update RDS datasource URL ────────────────────────────────────────────
+# ── [4] Update RDS datasource URL ────────────────────────────────────────────
 echo ""
 echo "[4/8] Updating SPRING_DATASOURCE_URL in DB service helm-values..."
 if [ -z "${JDBC_URL}" ]; then
@@ -156,7 +156,7 @@ else
   done
 fi
 
-# ── [4] Update ACM cert ARN + hostnames in app ingress ───────────────────────
+# ── [5] Update ACM cert ARN + hostnames in app ingress ───────────────────────
 echo ""
 echo "[5/8] Updating app ingress (cert ARN + hostnames)..."
 APP_INGRESS="${REPO_ROOT}/k8s/overlays/${ENV}/ingress.yaml"
@@ -174,29 +174,38 @@ if [ -f "${APP_INGRESS}" ]; then
   echo "      ${ADMIN_HOST} → admin-server"
 fi
 
-# ── [5] Update monitoring ingress ────────────────────────────────────────────
+# ── [6] Update monitoring ingress cert ARN + hostnames ───────────────────────
+# Uses yq by path for reliable host replacement across dev/prod environments.
+# sed was unreliable for replacing existing host values.
 echo ""
 echo "[6/8] Updating monitoring ingress (cert ARN + hostnames)..."
 MONITORING_INGRESS="${REPO_ROOT}/monitoring/monitoring-ingress.yaml"
 if [ -f "${MONITORING_INGRESS}" ]; then
+  # Update cert ARN — replace placeholder or any existing ACM ARN
   if [ -n "${CERT_ARN}" ]; then
     sed -i "s|CERT_ARN_PLACEHOLDER|${CERT_ARN}|g" "${MONITORING_INGRESS}"
     sed -i \
       "s|arn:aws:acm:[a-z0-9-]*:[0-9]*:certificate/[a-f0-9-]*|${CERT_ARN}|g" \
       "${MONITORING_INGRESS}"
   fi
+
+  # Replace placeholder hostnames (first-time run)
   sed -i "s|PLACEHOLDER_GRAFANA_HOST|${GRAFANA_HOST}|g" "${MONITORING_INGRESS}"
   sed -i "s|PLACEHOLDER_ARGOCD_HOST|${ARGOCD_HOST}|g" "${MONITORING_INGRESS}"
   sed -i "s|PLACEHOLDER_ZIPKIN_HOST|${ZIPKIN_HOST}|g" "${MONITORING_INGRESS}"
-  sed -i \
-    "s|grafana-dev\.[^'\"[:space:]]*\|grafana\.[^'\"[:space:]]*|${GRAFANA_HOST}|g" \
-    "${MONITORING_INGRESS}" 2>/dev/null || true
-  sed -i \
-    "s|argocd-dev\.[^'\"[:space:]]*\|argocd\.[^'\"[:space:]]*|${ARGOCD_HOST}|g" \
-    "${MONITORING_INGRESS}" 2>/dev/null || true
-  sed -i \
-    "s|zipkin-dev\.[^'\"[:space:]]*\|zipkin\.[^'\"[:space:]]*|${ZIPKIN_HOST}|g" \
-    "${MONITORING_INGRESS}" 2>/dev/null || true
+
+  # Replace existing host values using yq — reliable for both dev and prod
+  # This handles re-runs after destroy+recreate where hosts are already set
+  yq -i \
+    "(select(.metadata.name == \"grafana-ingress\") | .spec.rules[0].host) = \"${GRAFANA_HOST}\"" \
+    "${MONITORING_INGRESS}"
+  yq -i \
+    "(select(.metadata.name == \"argocd-ingress\") | .spec.rules[0].host) = \"${ARGOCD_HOST}\"" \
+    "${MONITORING_INGRESS}"
+  yq -i \
+    "(select(.metadata.name == \"zipkin-ingress\") | .spec.rules[0].host) = \"${ZIPKIN_HOST}\"" \
+    "${MONITORING_INGRESS}"
+
   echo "   ✅ monitoring/monitoring-ingress.yaml"
   echo "      Cert ARN: ${CERT_ARN}"
   echo "      ${GRAFANA_HOST} → grafana"
@@ -204,7 +213,7 @@ if [ -f "${MONITORING_INGRESS}" ]; then
   echo "      ${ZIPKIN_HOST} → zipkin"
 fi
 
-# ── [6] Update Prometheus scrape namespace ────────────────────────────────────
+# ── [7] Update Prometheus scrape namespace and Grafana root_url ──────────────
 echo ""
 echo "[7/8] Updating Prometheus scrape namespace and Grafana root_url..."
 PROM_VALUES="${REPO_ROOT}/monitoring/prometheus-values.yaml"
@@ -224,7 +233,7 @@ if [ -f "${GRAFANA_VALUES}" ]; then
   echo "   ✅ monitoring/grafana-values.yaml → root_url: https://${GRAFANA_HOST}"
 fi
 
-# ── [7] Update ArgoCD application repo URLs ───────────────────────────────────
+# ── [8] Update ArgoCD application repo URLs ───────────────────────────────────
 echo ""
 echo "[8/8] Updating ArgoCD application repo URLs..."
 if [ -z "${GITHUB_ORG}" ] || [ -z "${INFRA_REPO}" ]; then

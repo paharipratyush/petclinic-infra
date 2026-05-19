@@ -24,7 +24,7 @@ metadata:
 spec:
   ingressClassName: alb
   rules:
-    - host: grafana-dev.praty.dev
+    - host: grafana.praty.dev
       http:
         paths:
           - path: /
@@ -54,7 +54,7 @@ metadata:
 spec:
   ingressClassName: alb
   rules:
-    - host: argocd-dev.praty.dev
+    - host: argocd.praty.dev
       http:
         paths:
           - path: /
@@ -82,7 +82,7 @@ metadata:
 spec:
   ingressClassName: alb
   rules:
-    - host: zipkin-dev.praty.dev
+    - host: zipkin.praty.dev
       http:
         paths:
           - path: /
