@@ -33,6 +33,7 @@ ESO_ROLE_ARN=$(terraform output -raw eso_role_arn)
 CERT_ARN=$(terraform output -raw certificate_arn)
 KARPENTER_ROLE_ARN=$(terraform output -raw karpenter_role_arn)
 KARPENTER_QUEUE=$(terraform output -raw karpenter_queue_name)
+KARPENTER_INSTANCE_PROFILE=$(terraform output -raw karpenter_instance_profile_name)
 
 cd "${REPO_ROOT}"
 
@@ -42,14 +43,15 @@ AWS_REGION=$(grep "^aws_region" "${TFVARS}" \
   || aws configure get region 2>/dev/null \
   || echo "ap-south-1")
 
-echo "  Cluster        : ${CLUSTER_NAME}"
-echo "  Region         : ${AWS_REGION}"
-echo "  LB Role ARN    : ${LB_ROLE_ARN}"
-echo "  VPC ID         : ${VPC_ID}"
-echo "  ESO Role ARN   : ${ESO_ROLE_ARN}"
-echo "  Cert ARN       : ${CERT_ARN}"
-echo "  Karpenter Role : ${KARPENTER_ROLE_ARN}"
-echo "  Karpenter Queue: ${KARPENTER_QUEUE}"
+echo "  Cluster              : ${CLUSTER_NAME}"
+echo "  Region               : ${AWS_REGION}"
+echo "  LB Role ARN          : ${LB_ROLE_ARN}"
+echo "  VPC ID               : ${VPC_ID}"
+echo "  ESO Role ARN         : ${ESO_ROLE_ARN}"
+echo "  Cert ARN             : ${CERT_ARN}"
+echo "  Karpenter Role       : ${KARPENTER_ROLE_ARN}"
+echo "  Karpenter Queue      : ${KARPENTER_QUEUE}"
+echo "  Karpenter Profile    : ${KARPENTER_INSTANCE_PROFILE}"
 
 # ── Helper: check if Helm release is healthy ─────────────────────────────────
 helm_release_healthy() {
@@ -203,15 +205,12 @@ kubectl get applications -n argocd 2>/dev/null || true
 # visits table has FK: visits.pet_id → pets.id (created by customers-service).
 # If visits-service starts before customers-service schema is initialized,
 # it crashes with "Failed to open the referenced table 'pets'".
-# Fix: wait for customers-service to be ready, then restart visits-service
-# if it already started and crashed.
 echo "  Waiting for customers-service to be ready (DB schema init order)..."
 kubectl wait --for=condition=ready pod \
   -l app.kubernetes.io/name=customers-service \
   -n "petclinic-${ENV}" --timeout=300s 2>/dev/null || true
 echo "  ✅ customers-service ready"
 
-# Check if visits-service crashed due to schema ordering issue
 VISITS_RESTARTS=$(kubectl get pod -n "petclinic-${ENV}" \
   -l app.kubernetes.io/name=visits-service \
   -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}' \
@@ -222,7 +221,7 @@ VISITS_PHASE=$(kubectl get pod -n "petclinic-${ENV}" \
   2>/dev/null || echo "")
 
 if [ "${VISITS_RESTARTS}" -gt "0" ] || [ "${VISITS_PHASE}" = "Failed" ]; then
-  echo "  visits-service has ${VISITS_RESTARTS} restart(s) — restarting after customers-service is ready..."
+  echo "  visits-service has ${VISITS_RESTARTS} restart(s) — restarting..."
   VISITS_POD=$(kubectl get pod -n "petclinic-${ENV}" \
     -l app.kubernetes.io/name=visits-service \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
@@ -256,9 +255,19 @@ else
   echo "  ✅ Karpenter installed (v1.1.1)"
 fi
 
-kubectl apply -f "${REPO_ROOT}/k8s/base/karpenter/nodepool.yaml"
+# Apply NodePool and EC2NodeClass with env-specific values.
+# nodepool.yaml has hardcoded petclinic-dev values — inject correct env
+# values using sed before applying so each environment gets the right
+# subnet/SG selectors and instance profile.
+echo "  Applying NodePool and EC2NodeClass for ${ENV}..."
+sed \
+  -e "s|karpenter.sh/discovery: petclinic-dev|karpenter.sh/discovery: ${CLUSTER_NAME}|g" \
+  -e "s|instanceProfile: petclinic-dev-karpenter-node-profile|instanceProfile: ${KARPENTER_INSTANCE_PROFILE}|g" \
+  "${REPO_ROOT}/k8s/base/karpenter/nodepool.yaml" | kubectl apply -f -
+
 kubectl get nodepool
-echo "  ✅ NodePool applied"
+kubectl get ec2nodeclass
+echo "  ✅ Karpenter installed and NodePool applied for ${ENV}"
 
 # ── Step 9: Monitoring stack ──────────────────────────────────────────────────
 echo ""
