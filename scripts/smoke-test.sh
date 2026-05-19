@@ -69,8 +69,6 @@ check_health() {
 }
 
 # ── Helper: check config-server specifically ──────────────────────────────────
-# Config-server intercepts /actuator/health as a config request.
-# Instead we verify it returns valid config by checking /petclinic-service/docker
 check_config_server() {
   local pod
   pod=$(kubectl get pod -n "${NAMESPACE}" -l "app.kubernetes.io/name=config-server" \
@@ -82,7 +80,6 @@ check_config_server() {
     return
   fi
 
-  # /petclinic-service/docker returns config for the app — proves config-server is serving
   local response
   response=$(kubectl exec "${pod}" -n "${NAMESPACE}" -- \
     wget -qO- "http://localhost:8888/petclinic-service/docker" 2>/dev/null || echo "")
@@ -116,16 +113,25 @@ check_config_server
 # ── Check 3: Discovery Server — all services registered ──────────────────────
 echo ""
 echo "[3/4] Checking Discovery Server (Eureka) registrations..."
-POD=$(kubectl get pod -n "${NAMESPACE}" -l "app.kubernetes.io/name=discovery-server" \
-  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 
-if [ -n "${POD}" ]; then
-  # Fetch Eureka apps XML — run grep locally (not inside pod) using simple -o flag
-  # No -P flag needed — works on all systems including WSL
-  APPS=$(kubectl exec "${POD}" -n "${NAMESPACE}" -- \
-    wget -qO- http://localhost:8761/eureka/apps 2>/dev/null || echo "")
+# Get ALL discovery-server pods and combine Eureka registrations.
+# In prod there are 2 replicas — Eureka replication between instances
+# can take 30-90 seconds. Checking all pods and merging results ensures
+# we don't fail just because one pod hasn't replicated yet.
+APPS=""
+while IFS= read -r POD; do
+  if [ -n "${POD}" ]; then
+    POD_APPS=$(kubectl exec "${POD}" -n "${NAMESPACE}" -- \
+      wget -qO- http://localhost:8761/eureka/apps 2>/dev/null || echo "")
+    APPS="${APPS}${POD_APPS}"
+  fi
+done < <(kubectl get pod -n "${NAMESPACE}" \
+  -l "app.kubernetes.io/name=discovery-server" \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null)
 
-  EXPECTED_SERVICES=("API-GATEWAY" "CUSTOMERS-SERVICE" "VISITS-SERVICE" "VETS-SERVICE" "GENAI-SERVICE" "ADMIN-SERVER")
+if [ -n "${APPS}" ]; then
+  EXPECTED_SERVICES=("API-GATEWAY" "CUSTOMERS-SERVICE" "VISITS-SERVICE" \
+                     "VETS-SERVICE" "GENAI-SERVICE" "ADMIN-SERVER")
   for SVC in "${EXPECTED_SERVICES[@]}"; do
     if echo "${APPS}" | grep -qi "<name>${SVC}</name>"; then
       echo "   ✅ ${SVC} registered in Eureka"
