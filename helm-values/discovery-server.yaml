@@ -1,5 +1,5 @@
 image:
-  repository: 482352877891.dkr.ecr.ap-south-1.amazonaws.com/petclinic-dev/discovery-server
+  repository: 482352877891.dkr.ecr.ap-south-1.amazonaws.com/petclinic-prod/discovery-server
   tag: v1.0.0
 service:
   port: 8761
