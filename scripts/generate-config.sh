@@ -23,7 +23,6 @@ echo "=============================================="
 
 # ── Safety warning ────────────────────────────────────────────────────────────
 # Warn if generating prod config while kubectl points to dev cluster.
-# This prevents accidentally deploying prod images to dev via ArgoCD.
 CURRENT_CONTEXT=$(kubectl config current-context 2>/dev/null || echo "unknown")
 echo ""
 echo " Current kubectl context: ${CURRENT_CONTEXT}"
@@ -140,18 +139,32 @@ for SERVICE in "${SERVICES[@]}"; do
   fi
 done
 
-# ── [3] Reset SHA image tags to v1.0.0 on fresh cluster deploy ───────────────
+# ── [3] Reset SHA image tags — only if image doesn't exist in ECR ─────────────
+# On a fresh cluster after destroy+recreate, CI/CD SHA tags from the previous
+# cluster no longer exist in the new ECR repos. Reset to v1.0.0 ONLY when
+# the image is confirmed missing from ECR — avoids resetting valid CI/CD tags.
 echo ""
-echo "[3/8] Checking and resetting stale SHA image tags..."
+echo "[3/8] Checking image tags (reset stale SHAs only if not in ECR)..."
 TAGS_RESET=0
 for SERVICE in "${SERVICES[@]}"; do
   FILE="${HELM_VALUES_DIR}/${SERVICE}.yaml"
   if [ -f "${FILE}" ]; then
     CURRENT_TAG=$(yq '.image.tag' "${FILE}" 2>/dev/null || echo "")
     if echo "${CURRENT_TAG}" | grep -qE '^[0-9a-f]{7}$'; then
-      yq -i '.image.tag = "v1.0.0"' "${FILE}"
-      echo "   ✅ helm-values/${ENV}/${SERVICE}.yaml: ${CURRENT_TAG} → v1.0.0 (stale SHA reset)"
-      TAGS_RESET=$((TAGS_RESET + 1))
+      # Check if this SHA image actually exists in ECR
+      IMAGE_EXISTS=$(aws ecr describe-images \
+        --repository-name "petclinic-${ENV}/${SERVICE}" \
+        --region "${AWS_REGION}" \
+        --image-ids imageTag="${CURRENT_TAG}" \
+        --query "imageDetails[0].imageTags[0]" \
+        --output text 2>/dev/null || echo "")
+      if [ -z "${IMAGE_EXISTS}" ] || [ "${IMAGE_EXISTS}" = "None" ]; then
+        yq -i '.image.tag = "v1.0.0"' "${FILE}"
+        echo "   ✅ helm-values/${ENV}/${SERVICE}.yaml: ${CURRENT_TAG} → v1.0.0 (image not in ECR — reset)"
+        TAGS_RESET=$((TAGS_RESET + 1))
+      else
+        echo "   ✅ helm-values/${ENV}/${SERVICE}.yaml: tag=${CURRENT_TAG} (exists in ECR — keeping)"
+      fi
     else
       echo "   ✅ helm-values/${ENV}/${SERVICE}.yaml: tag=${CURRENT_TAG} (no change)"
     fi
@@ -159,6 +172,7 @@ for SERVICE in "${SERVICES[@]}"; do
 done
 if [ "${TAGS_RESET}" -gt 0 ]; then
   echo "   ℹ️  Reset ${TAGS_RESET} stale SHA tag(s) to v1.0.0"
+  echo "      These images no longer exist in ECR (fresh cluster deploy)"
 fi
 
 # ── [4] Update RDS datasource URL ────────────────────────────────────────────
@@ -196,7 +210,7 @@ if [ -f "${APP_INGRESS}" ]; then
   echo "      ${ADMIN_HOST} → admin-server"
 fi
 
-# ── [6] Update monitoring ingress ────────────────────────────────────────────
+# ── [6] Update monitoring ingress cert ARN + hostnames ───────────────────────
 echo ""
 echo "[6/8] Updating monitoring ingress (cert ARN + hostnames)..."
 MONITORING_INGRESS="${REPO_ROOT}/monitoring/monitoring-ingress.yaml"
@@ -233,8 +247,10 @@ PROM_VALUES="${REPO_ROOT}/monitoring/prometheus-values.yaml"
 if [ -f "${PROM_VALUES}" ]; then
   sed -i "s|PLACEHOLDER_K8S_NAMESPACE|${K8S_NAMESPACE}|g" "${PROM_VALUES}"
   sed -i "s|PLACEHOLDER_K8S_ENV|${ENV}|g" "${PROM_VALUES}"
+  # Replace namespace in scrape targets
   sed -i "s|\.petclinic-dev:|\.${K8S_NAMESPACE}:|g" "${PROM_VALUES}"
   sed -i "s|\.petclinic-prod:|\.${K8S_NAMESPACE}:|g" "${PROM_VALUES}"
+  # Replace namespace in alert rule expressions
   sed -i \
     "s|namespace=~\"petclinic-dev\"|namespace=~\"${K8S_NAMESPACE}\"|g" \
     "${PROM_VALUES}"
