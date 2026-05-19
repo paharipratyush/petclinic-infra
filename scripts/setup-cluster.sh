@@ -56,26 +56,24 @@ helm_release_healthy() {
   local release="$1"
   local namespace="$2"
   local min_pods="${3:-1}"
-  
-  # Check if release exists and is deployed
+
   STATUS=$(helm status "${release}" -n "${namespace}" \
     --output json 2>/dev/null | python3 -c \
     "import json,sys; print(json.load(sys.stdin)['info']['status'])" \
     2>/dev/null || echo "not-found")
-  
+
   if [ "${STATUS}" != "deployed" ]; then
     return 1
   fi
-  
-  # Check if pods are running
+
   RUNNING=$(kubectl get pods -n "${namespace}" \
     --field-selector=status.phase=Running \
     --no-headers 2>/dev/null | wc -l)
-  
+
   if [ "${RUNNING}" -lt "${min_pods}" ]; then
     return 1
   fi
-  
+
   return 0
 }
 
@@ -200,6 +198,42 @@ kubectl apply -f "${REPO_ROOT}/argocd/applications/${ENV}/"
 echo "  Waiting 60s for ArgoCD to begin syncing..."
 sleep 60
 kubectl get applications -n argocd 2>/dev/null || true
+
+# ── Schema init order fix ─────────────────────────────────────────────────────
+# visits table has FK: visits.pet_id → pets.id (created by customers-service).
+# If visits-service starts before customers-service schema is initialized,
+# it crashes with "Failed to open the referenced table 'pets'".
+# Fix: wait for customers-service to be ready, then restart visits-service
+# if it already started and crashed.
+echo "  Waiting for customers-service to be ready (DB schema init order)..."
+kubectl wait --for=condition=ready pod \
+  -l app.kubernetes.io/name=customers-service \
+  -n "petclinic-${ENV}" --timeout=300s 2>/dev/null || true
+echo "  ✅ customers-service ready"
+
+# Check if visits-service crashed due to schema ordering issue
+VISITS_RESTARTS=$(kubectl get pod -n "petclinic-${ENV}" \
+  -l app.kubernetes.io/name=visits-service \
+  -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}' \
+  2>/dev/null || echo "0")
+VISITS_PHASE=$(kubectl get pod -n "petclinic-${ENV}" \
+  -l app.kubernetes.io/name=visits-service \
+  -o jsonpath='{.items[0].status.phase}' \
+  2>/dev/null || echo "")
+
+if [ "${VISITS_RESTARTS}" -gt "0" ] || [ "${VISITS_PHASE}" = "Failed" ]; then
+  echo "  visits-service has ${VISITS_RESTARTS} restart(s) — restarting after customers-service is ready..."
+  VISITS_POD=$(kubectl get pod -n "petclinic-${ENV}" \
+    -l app.kubernetes.io/name=visits-service \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+  if [ -n "${VISITS_POD}" ]; then
+    kubectl delete pod "${VISITS_POD}" -n "petclinic-${ENV}" 2>/dev/null || true
+    echo "  ✅ visits-service pod restarted"
+  fi
+else
+  echo "  ✅ visits-service starting cleanly"
+fi
+
 echo "  ✅ ArgoCD applications deployed"
 
 # ── Step 8: Karpenter ─────────────────────────────────────────────────────────
