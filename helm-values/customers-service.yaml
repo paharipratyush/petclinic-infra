@@ -1,6 +1,6 @@
 image:
   # Filled automatically by scripts/generate-config.sh after terraform apply
-  repository: 482352877891.dkr.ecr.ap-south-1.amazonaws.com/petclinic-prod/customers-service
+  repository: 482352877891.dkr.ecr.ap-south-1.amazonaws.com/petclinic-dev/customers-service
   tag: v1.0.0
 service:
   port: 8081
@@ -11,7 +11,7 @@ env:
   - name: CONFIG_SERVER_URL
     value: "http://config-server:8888"
   - name: SPRING_DATASOURCE_URL
-    value: "jdbc:mysql://petclinic-prod-mysql.cbsumcwgg4sm.ap-south-1.rds.amazonaws.com:3306/petclinic"
+    value: "jdbc:mysql://petclinic-dev-mysql.cbsumcwgg4sm.ap-south-1.rds.amazonaws.com:3306/petclinic"
   - name: SPRING_DATASOURCE_USERNAME
     valueFrom:
       secretKeyRef:

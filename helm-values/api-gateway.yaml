@@ -1,6 +1,6 @@
 image:
   # Filled automatically by scripts/generate-config.sh after terraform apply
-  repository: 482352877891.dkr.ecr.ap-south-1.amazonaws.com/petclinic-prod/api-gateway
+  repository: 482352877891.dkr.ecr.ap-south-1.amazonaws.com/petclinic-dev/api-gateway
   tag: v1.0.0
 service:
   port: 8080
