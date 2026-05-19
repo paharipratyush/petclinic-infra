@@ -1,5 +1,4 @@
 deploymentMode: SingleBinary
-
 loki:
   auth_enabled: false
   storage:
@@ -15,6 +14,45 @@ loki:
         index:
           prefix: index_
           period: 24h
+  # ── Loki alerting rules ────────────────────────────────────────────────────
+  # Log-based alerts that metrics can't detect:
+  # - Error spikes: high rate of ERROR log lines
+  # - OOM events: OutOfMemoryError in logs (pod about to crash)
+  # Alerts route to Alertmanager → email notification
+  rulesConfig:
+    - filename: petclinic-loki-alerts.yaml
+      content: |
+        groups:
+          - name: petclinic-log-alerts
+            rules:
+              # Alert: Error log spike — >0.5 ERROR lines/sec over 5 min
+              - alert: LogErrorSpike
+                expr: |
+                  sum(rate({namespace=~"petclinic-.*"} |= "ERROR" [5m])) > 0.5
+                for: 5m
+                labels:
+                  severity: warning
+                annotations:
+                  summary: "High error log rate in petclinic namespace"
+                  description: "Error log rate exceeds 0.5/sec for 5 minutes. Check service logs in Grafana."
+
+              # Alert: JVM OutOfMemoryError — any OOM detected in logs
+              - alert: JVMOutOfMemory
+                expr: |
+                  count_over_time({namespace=~"petclinic-.*"} |= "OutOfMemoryError" [5m]) > 0
+                for: 0m
+                labels:
+                  severity: critical
+                annotations:
+                  summary: "JVM OutOfMemoryError detected in petclinic"
+                  description: "OutOfMemoryError found in logs. Pod may restart. Check JVM heap settings."
+
+  rulerConfig:
+    alertmanager_url: http://alertmanager.monitoring:9093
+    enable_api: true
+    ring:
+      kvstore:
+        store: inmemory
 
 singleBinary:
   replicas: 1
@@ -22,7 +60,6 @@ singleBinary:
     enabled: true
     size: 10Gi
     storageClass: gp2
-
 monitoring:
   selfMonitoring:
     enabled: false
@@ -30,24 +67,17 @@ monitoring:
       installOperator: false
   lokiCanary:
     enabled: false
-
 test:
   enabled: false
-
 gateway:
   enabled: false
-
 read:
   replicas: 0
-
 write:
   replicas: 0
-
 backend:
   replicas: 0
-
 chunksCache:
   enabled: false
-
 resultsCache:
   enabled: false

@@ -115,9 +115,6 @@ for SERVICE in "${SERVICES[@]}"; do
 done
 
 # ── [3] Reset SHA image tags to v1.0.0 on fresh cluster deploy ───────────────
-# On a fresh cluster after destroy+recreate, CI/CD SHA tags from the previous
-# cluster no longer exist in the new ECR repos. Only v1.0.0 (from
-# build-push-images.sh) exists. Detect SHA tags (7 hex chars) and reset them.
 echo ""
 echo "[3/8] Checking and resetting stale SHA image tags..."
 TAGS_RESET=0
@@ -136,7 +133,6 @@ for SERVICE in "${SERVICES[@]}"; do
 done
 if [ "${TAGS_RESET}" -gt 0 ]; then
   echo "   ℹ️  Reset ${TAGS_RESET} stale SHA tag(s) to v1.0.0"
-  echo "      These SHA images no longer exist in the new ECR repos."
 fi
 
 # ── [4] Update RDS datasource URL ────────────────────────────────────────────
@@ -175,27 +171,19 @@ if [ -f "${APP_INGRESS}" ]; then
 fi
 
 # ── [6] Update monitoring ingress cert ARN + hostnames ───────────────────────
-# Uses yq by path for reliable host replacement across dev/prod environments.
-# sed was unreliable for replacing existing host values.
 echo ""
 echo "[6/8] Updating monitoring ingress (cert ARN + hostnames)..."
 MONITORING_INGRESS="${REPO_ROOT}/monitoring/monitoring-ingress.yaml"
 if [ -f "${MONITORING_INGRESS}" ]; then
-  # Update cert ARN — replace placeholder or any existing ACM ARN
   if [ -n "${CERT_ARN}" ]; then
     sed -i "s|CERT_ARN_PLACEHOLDER|${CERT_ARN}|g" "${MONITORING_INGRESS}"
     sed -i \
       "s|arn:aws:acm:[a-z0-9-]*:[0-9]*:certificate/[a-f0-9-]*|${CERT_ARN}|g" \
       "${MONITORING_INGRESS}"
   fi
-
-  # Replace placeholder hostnames (first-time run)
   sed -i "s|PLACEHOLDER_GRAFANA_HOST|${GRAFANA_HOST}|g" "${MONITORING_INGRESS}"
   sed -i "s|PLACEHOLDER_ARGOCD_HOST|${ARGOCD_HOST}|g" "${MONITORING_INGRESS}"
   sed -i "s|PLACEHOLDER_ZIPKIN_HOST|${ZIPKIN_HOST}|g" "${MONITORING_INGRESS}"
-
-  # Replace existing host values using yq — reliable for both dev and prod
-  # This handles re-runs after destroy+recreate where hosts are already set
   yq -i \
     "(select(.metadata.name == \"grafana-ingress\") | .spec.rules[0].host) = \"${GRAFANA_HOST}\"" \
     "${MONITORING_INGRESS}"
@@ -205,7 +193,6 @@ if [ -f "${MONITORING_INGRESS}" ]; then
   yq -i \
     "(select(.metadata.name == \"zipkin-ingress\") | .spec.rules[0].host) = \"${ZIPKIN_HOST}\"" \
     "${MONITORING_INGRESS}"
-
   echo "   ✅ monitoring/monitoring-ingress.yaml"
   echo "      Cert ARN: ${CERT_ARN}"
   echo "      ${GRAFANA_HOST} → grafana"
@@ -213,16 +200,23 @@ if [ -f "${MONITORING_INGRESS}" ]; then
   echo "      ${ZIPKIN_HOST} → zipkin"
 fi
 
-# ── [7] Update Prometheus scrape namespace and Grafana root_url ──────────────
+# ── [7] Update Prometheus scrape namespace and alert rules ────────────────────
 echo ""
 echo "[7/8] Updating Prometheus scrape namespace and Grafana root_url..."
 PROM_VALUES="${REPO_ROOT}/monitoring/prometheus-values.yaml"
 if [ -f "${PROM_VALUES}" ]; then
   sed -i "s|PLACEHOLDER_K8S_NAMESPACE|${K8S_NAMESPACE}|g" "${PROM_VALUES}"
   sed -i "s|PLACEHOLDER_K8S_ENV|${ENV}|g" "${PROM_VALUES}"
+  # Replace namespace in scrape targets (e.g. api-gateway.petclinic-dev:8080)
+  sed -i "s|\.petclinic-dev:|\.${K8S_NAMESPACE}:|g" "${PROM_VALUES}"
+  sed -i "s|\.petclinic-prod:|\.${K8S_NAMESPACE}:|g" "${PROM_VALUES}"
+  # Replace namespace in alert rule expressions (e.g. namespace=~"petclinic-dev")
   sed -i \
-    "s|petclinic-dev\|petclinic-prod|${K8S_NAMESPACE}|g" \
-    "${PROM_VALUES}" 2>/dev/null || true
+    "s|namespace=~\"petclinic-dev\"|namespace=~\"${K8S_NAMESPACE}\"|g" \
+    "${PROM_VALUES}"
+  sed -i \
+    "s|namespace=~\"petclinic-prod\"|namespace=~\"${K8S_NAMESPACE}\"|g" \
+    "${PROM_VALUES}"
   echo "   ✅ monitoring/prometheus-values.yaml → namespace: ${K8S_NAMESPACE}"
 fi
 

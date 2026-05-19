@@ -8,7 +8,6 @@ server:
     scrape_interval: 15s
     evaluation_interval: 15s
 
-# alertmanager is deployed separately (monitoring/alertmanager.yaml)
 alertmanager:
   enabled: false
 
@@ -18,15 +17,11 @@ pushgateway:
 nodeExporter:
   enabled: true
 
-# ── Alert rules ───────────────────────────────────────────────────────────────
-# Uses serverFiles (correct for standalone prometheus chart, not Prometheus Operator)
-# PrometheusRule CRDs require Prometheus Operator — we use the standalone chart.
 serverFiles:
   alerting_rules.yml:
     groups:
       - name: petclinic-alerts
         rules:
-          # Alert 1: Service down — no metrics received for 1 minute
           - alert: ServiceDown
             expr: up{job=~"api-gateway|customers-service|visits-service|vets-service|genai-service"} == 0
             for: 1m
@@ -36,7 +31,6 @@ serverFiles:
               summary: "Service {{ $labels.job }} is down"
               description: "{{ $labels.job }} has been unreachable for more than 1 minute."
 
-          # Alert 2: High error rate — >5% 5xx responses over 5 minutes
           - alert: HighErrorRate
             expr: |
               sum(rate(http_server_requests_seconds_count{job=~"api-gateway|customers-service|visits-service|vets-service|genai-service",status=~"5.."}[5m])) by (job)
@@ -50,7 +44,6 @@ serverFiles:
               summary: "High error rate on {{ $labels.job }}"
               description: "{{ $labels.job }} has >5% HTTP 5xx error rate for 5 minutes."
 
-          # Alert 3: High latency — p95 > 500ms over 5 minutes
           - alert: HighLatency
             expr: |
               histogram_quantile(0.95,
@@ -63,7 +56,7 @@ serverFiles:
               summary: "High latency on {{ $labels.job }}"
               description: "{{ $labels.job }} p95 latency is above 500ms for 5 minutes."
 
-          # Alert 4: Pod restart loop — >3 restarts in 15 minutes
+          # namespace=~"petclinic-dev" is replaced by generate-config.sh
           - alert: PodRestartLoop
             expr: increase(kube_pod_container_status_restarts_total{namespace=~"petclinic-dev"}[15m]) > 3
             for: 0m
@@ -73,7 +66,7 @@ serverFiles:
               summary: "Pod {{ $labels.pod }} is restart-looping"
               description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has restarted more than 3 times in 15 minutes."
 
-          # Alert 5: High memory usage — >80% of container limit for 5 minutes
+          # namespace=~"petclinic-dev" is replaced by generate-config.sh
           - alert: HighMemoryUsage
             expr: |
               container_memory_working_set_bytes{namespace=~"petclinic-dev",container!=""}
@@ -87,7 +80,6 @@ serverFiles:
               summary: "High memory usage for {{ $labels.container }}"
               description: "Container {{ $labels.container }} in pod {{ $labels.pod }} is using >80% of its memory limit."
 
-  # Connect Prometheus to Alertmanager for alert routing
   prometheus.yml:
     alerting:
       alertmanagers:
@@ -97,10 +89,16 @@ serverFiles:
     rule_files:
       - /etc/config/alerting_rules.yml
 
-# Scrape only the 5 services that have micrometer-registry-prometheus
-# DO NOT add config-server, discovery-server, or admin-server
-# They do not have the prometheus dependency and will return 404
-# Namespace is updated by scripts/generate-config.sh (replaces petclinic-dev)
+# ── Scrape targets ────────────────────────────────────────────────────────────
+# Only 5 of 8 services have micrometer-registry-prometheus dependency:
+#   ✅ api-gateway, customers-service, visits-service, vets-service, genai-service
+#
+# NOT scraped (no prometheus dependency — returns 404):
+#   ❌ config-server    — Spring Cloud Config Server, no /actuator/prometheus
+#   ❌ discovery-server — Eureka Server, no /actuator/prometheus
+#   ❌ admin-server     — Spring Boot Admin UI, no /actuator/prometheus
+#
+# Namespace targets are updated by scripts/generate-config.sh
 extraScrapeConfigs: |
   - job_name: api-gateway
     metrics_path: /actuator/prometheus

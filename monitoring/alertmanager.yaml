@@ -13,15 +13,27 @@ spec:
     requests:
       storage: 2Gi
 ---
+# ── Alertmanager config stored as K8s Secret ─────────────────────────────────
+# Using Secret instead of ConfigMap prevents credentials from appearing
+# in plain text. Credentials are injected at deploy time from AWS Secrets
+# Manager by setup-cluster.sh — never committed to Git.
+# Placeholders ALERTMANAGER_EMAIL_PLACEHOLDER and
+# ALERTMANAGER_PASSWORD_PLACEHOLDER are replaced at deploy time.
 apiVersion: v1
-kind: ConfigMap
+kind: Secret
 metadata:
   name: alertmanager-config
   namespace: monitoring
-data:
+type: Opaque
+stringData:
   alertmanager.yml: |
     global:
       resolve_timeout: 5m
+      smtp_smarthost: 'smtp.gmail.com:587'
+      smtp_from: 'ALERTMANAGER_EMAIL_PLACEHOLDER'
+      smtp_auth_username: 'ALERTMANAGER_EMAIL_PLACEHOLDER'
+      smtp_auth_password: 'ALERTMANAGER_PASSWORD_PLACEHOLDER'
+      smtp_require_tls: true
 
     route:
       group_by: ['alertname', 'namespace']
@@ -44,21 +56,17 @@ data:
     receivers:
       - name: 'null'
       - name: 'critical-alerts'
-        # Configure your notification channel here — see docs/monitoring-alerting-guide.md
-        # Email example:
-        # email_configs:
-        #   - to: 'your-email@example.com'
-        #     from: 'alertmanager@petclinic'
-        #     smarthost: 'smtp.gmail.com:587'
-        #     auth_username: 'your-email@example.com'
-        #     auth_password: 'your-app-password'
-        #     require_tls: true
-        # Slack example:
-        # slack_configs:
-        #   - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
-        #     channel: '#alerts'
+        email_configs:
+          - to: 'ALERTMANAGER_EMAIL_PLACEHOLDER'
+            send_resolved: true
+            headers:
+              Subject: '[CRITICAL] Petclinic Alert: {{ .GroupLabels.alertname }}'
       - name: 'warning-alerts'
-        # Same as critical — add your notification channel above
+        email_configs:
+          - to: 'ALERTMANAGER_EMAIL_PLACEHOLDER'
+            send_resolved: true
+            headers:
+              Subject: '[WARNING] Petclinic Alert: {{ .GroupLabels.alertname }}'
 
     inhibit_rules:
       - source_matchers:
@@ -123,10 +131,9 @@ spec:
             periodSeconds: 10
       volumes:
         - name: config
-          configMap:
-            name: alertmanager-config
+          secret:
+            secretName: alertmanager-config
         - name: storage
-          # PVC ensures alert history survives pod restarts
           persistentVolumeClaim:
             claimName: alertmanager-storage
 ---
