@@ -114,3 +114,28 @@ module "karpenter" {
   node_role_arn     = module.eks.node_role_arn
   tags              = local.tags
 }
+
+# ── Cross-SG rules: Karpenter nodes ↔ Managed nodes ─────────────────────────
+# Karpenter-provisioned nodes get the EKS cluster managed SG (auto-created by EKS).
+# Managed nodes get the eks_node SG (created in vpc module).
+# These rules allow full bidirectional communication so pods on Karpenter nodes
+# can reach pods on managed nodes (DNS, init containers, service mesh).
+resource "aws_security_group_rule" "karpenter_to_managed_node" {
+  description              = "Allow Karpenter nodes to reach managed nodes"
+  type                     = "ingress"
+  from_port                = 0
+  to_port                  = 0
+  protocol                 = "-1"
+  security_group_id        = module.vpc.eks_node_sg_id
+  source_security_group_id = module.eks.cluster_managed_sg_id
+}
+
+resource "aws_security_group_rule" "managed_node_to_karpenter" {
+  description              = "Allow managed nodes to reach Karpenter nodes"
+  type                     = "ingress"
+  from_port                = 0
+  to_port                  = 0
+  protocol                 = "-1"
+  security_group_id        = module.eks.cluster_managed_sg_id
+  source_security_group_id = module.vpc.eks_node_sg_id
+}
