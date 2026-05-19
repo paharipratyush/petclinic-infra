@@ -1,21 +1,6 @@
 #!/bin/bash
 # ==========================================================
 # setup-cluster.sh — Run AFTER terraform apply
-# Installs everything on the EKS cluster in the correct order:
-#   1. kubectl config
-#   2. Namespaces
-#   3. ArgoCD
-#   4. External Secrets Operator
-#   5. AWS Load Balancer Controller
-#   6. External Secrets (ClusterSecretStore + ExternalSecret CRs)
-#   7. ArgoCD Applications
-#   8. Karpenter (node autoscaling)
-#   9. Monitoring stack
-#  10. Ingresses
-#
-# Usage:
-#   ./scripts/setup-cluster.sh        # defaults to dev
-#   ./scripts/setup-cluster.sh prod
 # ==========================================================
 set -euo pipefail
 
@@ -29,7 +14,6 @@ echo "=============================================="
 echo " setup-cluster.sh — environment: ${ENV}"
 echo "=============================================="
 
-# ── Verify dependencies ───────────────────────────────────────────────────────
 for cmd in kubectl helm aws terraform yq; do
   if ! command -v "$cmd" &>/dev/null; then
     echo "ERROR: '$cmd' is required but not installed."
@@ -67,6 +51,34 @@ echo "  Cert ARN       : ${CERT_ARN}"
 echo "  Karpenter Role : ${KARPENTER_ROLE_ARN}"
 echo "  Karpenter Queue: ${KARPENTER_QUEUE}"
 
+# ── Helper: check if Helm release is healthy ─────────────────────────────────
+helm_release_healthy() {
+  local release="$1"
+  local namespace="$2"
+  local min_pods="${3:-1}"
+  
+  # Check if release exists and is deployed
+  STATUS=$(helm status "${release}" -n "${namespace}" \
+    --output json 2>/dev/null | python3 -c \
+    "import json,sys; print(json.load(sys.stdin)['info']['status'])" \
+    2>/dev/null || echo "not-found")
+  
+  if [ "${STATUS}" != "deployed" ]; then
+    return 1
+  fi
+  
+  # Check if pods are running
+  RUNNING=$(kubectl get pods -n "${namespace}" \
+    --field-selector=status.phase=Running \
+    --no-headers 2>/dev/null | wc -l)
+  
+  if [ "${RUNNING}" -lt "${min_pods}" ]; then
+    return 1
+  fi
+  
+  return 0
+}
+
 # ── Step 1: kubectl config ────────────────────────────────────────────────────
 echo ""
 echo "[1/10] Configuring kubectl..."
@@ -94,31 +106,69 @@ echo "  ✅ ArgoCD installed"
 # ── Step 4: External Secrets Operator ────────────────────────────────────────
 echo ""
 echo "[4/10] Installing External Secrets Operator..."
-helm repo add external-secrets https://charts.external-secrets.io 2>/dev/null || true
+helm repo add external-secrets \
+  https://charts.external-secrets.io 2>/dev/null || true
 helm repo update
-helm upgrade --install external-secrets external-secrets/external-secrets \
-  -n external-secrets \
-  --version 0.14.4 \
-  --set installCRDs=true \
-  --wait --timeout 120s
-echo "  ✅ ESO installed (v0.14.4)"
+
+if helm_release_healthy "external-secrets" "external-secrets" 1; then
+  echo "  ✅ ESO already running and healthy — skipping install"
+else
+  # Clean up any stuck/failed release before installing
+  HELM_STATUS=$(helm status external-secrets -n external-secrets \
+    --output json 2>/dev/null | python3 -c \
+    "import json,sys; print(json.load(sys.stdin)['info']['status'])" \
+    2>/dev/null || echo "not-found")
+
+  if [ "${HELM_STATUS}" = "pending-install" ] || \
+     [ "${HELM_STATUS}" = "failed" ] || \
+     [ "${HELM_STATUS}" = "pending-upgrade" ]; then
+    echo "  Cleaning up stuck ESO release (status: ${HELM_STATUS})..."
+    helm delete external-secrets -n external-secrets 2>/dev/null || true
+    sleep 5
+  fi
+
+  # Fix any stale CRD storedVersions before installing
+  for CRD in \
+    clusterexternalsecrets.external-secrets.io \
+    clustersecretstores.external-secrets.io \
+    externalsecrets.external-secrets.io \
+    secretstores.external-secrets.io; do
+    kubectl patch crd "${CRD}" --type=json \
+      -p='[{"op":"replace","path":"/status/storedVersions","value":["v1beta1"]}]' \
+      --subresource=status 2>/dev/null || true
+  done
+
+  helm upgrade --install external-secrets \
+    external-secrets/external-secrets \
+    -n external-secrets \
+    --version 0.14.4 \
+    --set installCRDs=true \
+    --wait --timeout 10m
+  echo "  ✅ ESO installed (v0.14.4)"
+fi
 
 # ── Step 5: AWS Load Balancer Controller ──────────────────────────────────────
 echo ""
 echo "[5/10] Installing AWS Load Balancer Controller..."
 helm repo add eks https://aws.github.io/eks-charts 2>/dev/null || true
 helm repo update
-helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
-  -n kube-system \
-  --version 1.8.1 \
-  --set clusterName="${CLUSTER_NAME}" \
-  --set serviceAccount.create=true \
-  --set serviceAccount.name=aws-load-balancer-controller \
-  --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=${LB_ROLE_ARN}" \
-  --set region="${AWS_REGION}" \
-  --set vpcId="${VPC_ID}" \
-  --wait --timeout 120s
-echo "  ✅ LB Controller installed (chart v1.8.1 = app v2.8.1)"
+
+if helm_release_healthy "aws-load-balancer-controller" "kube-system" 1; then
+  echo "  ✅ ALB Controller already running and healthy — skipping install"
+else
+  helm upgrade --install aws-load-balancer-controller \
+    eks/aws-load-balancer-controller \
+    -n kube-system \
+    --version 1.8.1 \
+    --set clusterName="${CLUSTER_NAME}" \
+    --set serviceAccount.create=true \
+    --set serviceAccount.name=aws-load-balancer-controller \
+    --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=${LB_ROLE_ARN}" \
+    --set region="${AWS_REGION}" \
+    --set vpcId="${VPC_ID}" \
+    --wait --timeout 10m
+  echo "  ✅ LB Controller installed (chart v1.8.1 = app v2.8.1)"
+fi
 
 # ── Step 6: External Secrets setup ───────────────────────────────────────────
 echo ""
@@ -153,47 +203,57 @@ kubectl get applications -n argocd 2>/dev/null || true
 echo "  ✅ ArgoCD applications deployed"
 
 # ── Step 8: Karpenter ─────────────────────────────────────────────────────────
-# Installed before monitoring so Karpenter can provision nodes if monitoring
-# pods require more capacity than the managed node group provides.
 echo ""
 echo "[8/10] Installing Karpenter..."
-helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter \
-  --version 1.1.1 \
-  -n kube-system \
-  --set "settings.clusterName=${CLUSTER_NAME}" \
-  --set "settings.interruptionQueue=${KARPENTER_QUEUE}" \
-  --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=${KARPENTER_ROLE_ARN}" \
-  --set controller.resources.requests.cpu=100m \
-  --set controller.resources.requests.memory=256Mi \
-  --wait --timeout 120s
+
+if helm_release_healthy "karpenter" "kube-system" 1; then
+  echo "  ✅ Karpenter already running and healthy — skipping install"
+else
+  helm upgrade --install karpenter \
+    oci://public.ecr.aws/karpenter/karpenter \
+    --version 1.1.1 \
+    -n kube-system \
+    --set "settings.clusterName=${CLUSTER_NAME}" \
+    --set "settings.interruptionQueue=${KARPENTER_QUEUE}" \
+    --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=${KARPENTER_ROLE_ARN}" \
+    --set controller.resources.requests.cpu=100m \
+    --set controller.resources.requests.memory=256Mi \
+    --wait --timeout 10m
+  echo "  ✅ Karpenter installed (v1.1.1)"
+fi
 
 kubectl apply -f "${REPO_ROOT}/k8s/base/karpenter/nodepool.yaml"
 kubectl get nodepool
-echo "  ✅ Karpenter installed (v1.1.1) and NodePool applied"
+echo "  ✅ NodePool applied"
 
 # ── Step 9: Monitoring stack ──────────────────────────────────────────────────
 echo ""
 echo "[9/10] Installing Metrics Server and monitoring stack..."
 
 echo "  Installing Metrics Server..."
-kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+kubectl apply -f \
+  https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
 kubectl patch deployment metrics-server -n kube-system \
   --type='json' \
   -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]' \
   2>/dev/null || true
 echo "  ✅ Metrics Server installed"
 
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 2>/dev/null || true
-helm repo add grafana https://grafana.github.io/helm-charts 2>/dev/null || true
-helm repo add fluent https://fluent.github.io/helm-charts 2>/dev/null || true
+helm repo add prometheus-community \
+  https://prometheus-community.github.io/helm-charts 2>/dev/null || true
+helm repo add grafana \
+  https://grafana.github.io/helm-charts 2>/dev/null || true
+helm repo add fluent \
+  https://fluent.github.io/helm-charts 2>/dev/null || true
 helm repo update
 
 echo "  Installing Prometheus..."
-helm upgrade --install prometheus prometheus-community/prometheus \
+helm upgrade --install prometheus \
+  prometheus-community/prometheus \
   -n monitoring \
   --version 25.21.0 \
   -f "${REPO_ROOT}/monitoring/prometheus-values.yaml" \
-  --wait --timeout 300s
+  --wait --timeout 10m
 
 echo "  Installing Loki..."
 helm upgrade --install loki grafana/loki \
@@ -206,14 +266,14 @@ helm upgrade --install fluent-bit fluent/fluent-bit \
   -n monitoring \
   --version 0.46.7 \
   -f "${REPO_ROOT}/monitoring/fluent-bit-values.yaml" \
-  --wait --timeout 120s
+  --wait --timeout 10m
 
 echo "  Installing Grafana..."
 helm upgrade --install grafana grafana/grafana \
   -n monitoring \
   --version 7.3.9 \
   -f "${REPO_ROOT}/monitoring/grafana-values.yaml" \
-  --wait --timeout 120s
+  --wait --timeout 10m
 
 echo "  Applying Alertmanager..."
 kubectl apply -f "${REPO_ROOT}/monitoring/alertmanager.yaml"
@@ -227,18 +287,14 @@ echo "  ✅ Monitoring stack installed"
 echo ""
 echo "[10/10] Applying ingresses..."
 
-# App ingress (petclinic + admin in petclinic-{env} namespace)
 kubectl apply -f "${REPO_ROOT}/k8s/overlays/${ENV}/ingress.yaml"
 
-# Grafana ingress (monitoring namespace)
 yq 'select(.metadata.namespace == "monitoring")' \
   "${REPO_ROOT}/monitoring/monitoring-ingress.yaml" | kubectl apply -f -
 
-# ArgoCD ingress (argocd namespace)
 yq 'select(.metadata.namespace == "argocd")' \
   "${REPO_ROOT}/monitoring/monitoring-ingress.yaml" | kubectl apply -f -
 
-# Zipkin ingress (tracing namespace)
 yq 'select(.metadata.namespace == "tracing")' \
   "${REPO_ROOT}/monitoring/monitoring-ingress.yaml" | kubectl apply -f -
 
@@ -253,7 +309,6 @@ kubectl get ingress -n argocd 2>/dev/null || true
 kubectl get ingress -n tracing 2>/dev/null || true
 echo "  ✅ Ingresses applied"
 
-# ── Final instructions ────────────────────────────────────────────────────────
 echo ""
 echo "=============================================="
 echo " Cluster setup complete!"
