@@ -21,19 +21,53 @@ for cmd in kubectl helm aws terraform yq; do
   fi
 done
 
+# ── Helper: read terraform output from S3 state directly ─────────────────────
+# Reads outputs directly from the S3 state file — bypasses terraform CLI
+# which hangs indefinitely on some systems due to TLS provider shutdown bug.
+# This is faster, more reliable, and doesn't require a state lock.
+tf_output() {
+  local KEY="$1"
+  local STATE_FILE="/tmp/tfstate-${ENV}.json"
+
+  # Download state if not already cached this session
+  if [ ! -f "${STATE_FILE}" ]; then
+    BACKEND_CONFIG="${REPO_ROOT}/config/backend-${ENV}.hcl"
+    S3_BUCKET=$(grep "^bucket" "${BACKEND_CONFIG}" \
+      | sed 's/.*=\s*//' | tr -d '"' | tr -d ' ')
+    S3_KEY=$(grep "^key" "${BACKEND_CONFIG}" \
+      | sed 's/.*=\s*//' | tr -d '"' | tr -d ' ')
+    S3_REGION=$(grep "^region" "${BACKEND_CONFIG}" \
+      | sed 's/.*=\s*//' | tr -d '"' | tr -d ' ')
+
+    aws s3 cp "s3://${S3_BUCKET}/${S3_KEY}" "${STATE_FILE}" \
+      --region "${S3_REGION}" --quiet
+  fi
+
+  python3 -c "
+import json, sys
+with open('${STATE_FILE}') as f:
+    state = json.load(f)
+outputs = state.get('outputs', {})
+val = outputs.get('${KEY}', {}).get('value', '')
+if isinstance(val, (dict, list)):
+    print(json.dumps(val))
+else:
+    print(val)
+" 2>/dev/null || echo ""
+}
+
 # ── Read terraform outputs ────────────────────────────────────────────────────
 echo ""
-echo "[0/10] Reading Terraform outputs..."
-cd "${TF_DIR}"
+echo "[0/10] Reading Terraform outputs from S3 state..."
 
-CLUSTER_NAME=$(terraform output -raw cluster_name)
-LB_ROLE_ARN=$(terraform output -raw lb_controller_role_arn)
-VPC_ID=$(terraform output -raw vpc_id)
-ESO_ROLE_ARN=$(terraform output -raw eso_role_arn)
-CERT_ARN=$(terraform output -raw certificate_arn)
-KARPENTER_ROLE_ARN=$(terraform output -raw karpenter_role_arn)
-KARPENTER_QUEUE=$(terraform output -raw karpenter_queue_name)
-KARPENTER_INSTANCE_PROFILE=$(terraform output -raw karpenter_instance_profile_name)
+CLUSTER_NAME=$(tf_output "cluster_name")
+LB_ROLE_ARN=$(tf_output "lb_controller_role_arn")
+VPC_ID=$(tf_output "vpc_id")
+ESO_ROLE_ARN=$(tf_output "eso_role_arn")
+CERT_ARN=$(tf_output "certificate_arn")
+KARPENTER_ROLE_ARN=$(tf_output "karpenter_role_arn")
+KARPENTER_QUEUE=$(tf_output "karpenter_queue_name")
+KARPENTER_INSTANCE_PROFILE=$(tf_output "karpenter_instance_profile_name")
 
 cd "${REPO_ROOT}"
 
@@ -42,6 +76,15 @@ AWS_REGION=$(grep "^aws_region" "${TFVARS}" \
   | sed 's/.*=\s*//' | tr -d '"' | tr -d "'" | tr -d ' ' \
   || aws configure get region 2>/dev/null \
   || echo "ap-south-1")
+
+# Validate all required outputs were read
+for VAR in CLUSTER_NAME LB_ROLE_ARN VPC_ID ESO_ROLE_ARN CERT_ARN \
+           KARPENTER_ROLE_ARN KARPENTER_QUEUE KARPENTER_INSTANCE_PROFILE; do
+  if [ -z "${!VAR}" ]; then
+    echo "ERROR: Could not read ${VAR} from state. Run terraform apply first."
+    exit 1
+  fi
+done
 
 echo "  Cluster              : ${CLUSTER_NAME}"
 echo "  Region               : ${AWS_REGION}"
@@ -80,9 +123,8 @@ helm_release_healthy() {
 }
 
 # ── Helper: Helm install with retry ──────────────────────────────────────────
-# Retries Helm installs up to 3 times with a delay between attempts.
-# Handles transient API server errors (net/http: request canceled) that occur
-# when EKS API server is still warming up after cluster creation.
+# Retries Helm installs up to 3 times with exponential backoff.
+# Handles transient API server errors that occur when EKS is warming up.
 helm_install_with_retry() {
   local max_attempts=3
   local attempt=1
@@ -116,10 +158,10 @@ echo "  Waiting for nodes to be Ready (up to 5 min)..."
 kubectl wait --for=condition=Ready nodes --all --timeout=300s
 kubectl get nodes
 
-# Wait for API server to be fully stable and able to serve OpenAPI schema.
+# Wait for API server to fully stabilize and serve OpenAPI schema.
 # EKS API server can take 2-5 minutes after nodes are Ready to fully
-# stabilize. Helm requires OpenAPI schema for validation — if the API server
-# is still warming up, Helm installs fail with "request canceled" errors.
+# stabilize. Helm requires OpenAPI schema — if API server is still
+# warming up, Helm installs fail with "request canceled" errors.
 echo "  Waiting for API server to stabilize (OpenAPI schema check)..."
 for i in $(seq 1 20); do
   if kubectl get --raw /openapi/v2 &>/dev/null 2>&1; then
@@ -134,10 +176,9 @@ for i in $(seq 1 20); do
   fi
 done
 
-# Extra buffer for CoreDNS and other system pods to be ready
+# Extra buffer for CoreDNS and system pods
 echo "  Waiting 30s for system pods to stabilize..."
 sleep 30
-
 echo "  ✅ kubectl configured and cluster ready"
 
 # ── Step 2: Namespaces ────────────────────────────────────────────────────────
@@ -359,7 +400,7 @@ helm_install_with_retry helm upgrade --install grafana grafana/grafana \
   -f "${REPO_ROOT}/monitoring/grafana-values.yaml" \
   --wait --timeout 10m
 
-# ── Alertmanager — inject credentials from Secrets Manager ───────────────────
+# ── Alertmanager credentials from Secrets Manager ────────────────────────────
 echo "  Configuring Alertmanager..."
 AM_SECRET_ID="petclinic/${ENV}/alertmanager-email"
 
@@ -398,8 +439,7 @@ if aws secretsmanager describe-secret \
     fi
   fi
 else
-  echo "  ⚠️  Alertmanager secret not found: ${AM_SECRET_ID}"
-  echo "      Run pre-apply-check.sh first to create it automatically"
+  echo "  ⚠️  Alertmanager secret not found — run pre-apply-check.sh first"
 fi
 
 kubectl apply -f "${REPO_ROOT}/monitoring/alertmanager.yaml"
@@ -446,15 +486,15 @@ echo "      ./mvnw clean install -DskipTests --no-transfer-progress --batch-mode
 echo "      cd ${REPO_ROOT}"
 echo "      ./scripts/build-push-images.sh --tag v1.0.0"
 echo ""
-echo "   2. Inject dynamic config (ECR URLs, RDS endpoint, cert ARN, domains):"
+echo "   2. Inject dynamic config:"
 echo "      ./scripts/generate-config.sh ${ENV}"
 echo ""
-echo "   3. Commit and push so ArgoCD picks up the config:"
+echo "   3. Commit and push:"
 echo "      git add helm-values/${ENV}/ k8s/ monitoring/ argocd/"
 echo "      git commit -m 'config: update dynamic values for ${ENV}'"
 echo "      git push"
 echo ""
-echo "   4. Wire DNS (Cloudflare CNAMEs → ALBs):"
+echo "   4. Wire DNS:"
 echo "      ./scripts/update-dns-and-ingress.sh ${ENV}"
 echo ""
 echo "   5. Run smoke test:"
