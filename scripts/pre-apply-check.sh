@@ -6,11 +6,12 @@
 # so any person can deploy from scratch without manual steps.
 #
 # Handles:
-#   1. Alertmanager email secret — creates if missing
-#   2. GitHub OIDC Provider — shared between dev and prod
-#   3. EKS Access Entry — auto-created by bootstrap, needs import
-#   4. Prod shared IAM resources — role and policy created by dev
-#   5. Cloudflare ACM validation record — creates or imports
+#   0. Alertmanager email secret — creates if missing
+#   1. GitHub OIDC Provider — shared between dev and prod
+#   2. EKS Access Entry — auto-created by bootstrap, needs import
+#   3. Prod shared IAM resources — role and policy created by dev
+#   4. Cloudflare ACM validation record — imports or creates for
+#      BOTH dev and prod (same CNAME, shared across environments)
 # ==========================================================
 set -euo pipefail
 
@@ -31,9 +32,19 @@ REGION=$(grep "^aws_region" "${TF_DIR}/terraform.tfvars" \
   || echo "ap-south-1")
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
+# Read Cloudflare credentials once — used in multiple checks
+ZONE_ID=$(grep "^cloudflare_zone_id" "${TF_DIR}/terraform.tfvars" \
+  | sed 's/.*=\s*//' | tr -d '"' | tr -d "'" | tr -d ' ' 2>/dev/null || echo "")
+CF_TOKEN=$(grep "^cloudflare_api_token" "${TF_DIR}/terraform.tfvars" \
+  | sed 's/.*=\s*//' | tr -d '"' | tr -d "'" | tr -d ' ' 2>/dev/null || echo "")
+DOMAIN=$(grep "^domain_name" "${TF_DIR}/terraform.tfvars" \
+  | sed 's/.*=\s*//' | tr -d '"' | tr -d "'" | tr -d ' ' 2>/dev/null || echo "")
+
 # ── Check 0: Alertmanager email secret ───────────────────────────────────────
-# Creates the secret if it doesn't exist — required by setup-cluster.sh.
-# Fully automated — no manual aws secretsmanager create-secret needed.
+# Creates the secret if missing — required by setup-cluster.sh Step 9.
+# Reads credentials from terraform.tfvars (alertmanager_email,
+# alertmanager_app_password) — never committed to Git since tfvars
+# is gitignored. Fully automated — no manual aws secretsmanager needed.
 echo ""
 echo "[0/5] Checking Alertmanager email secret..."
 
@@ -46,7 +57,6 @@ AM_EXISTS=$(aws secretsmanager describe-secret \
 if [ -n "${AM_EXISTS}" ]; then
   echo "  ✅ Alertmanager secret exists: ${AM_SECRET_ID}"
 else
-  # Read email config from tfvars if present, else use defaults
   AM_EMAIL=$(grep "^alertmanager_email" "${TF_DIR}/terraform.tfvars" \
     | sed 's/.*=\s*//' | tr -d '"' | tr -d "'" | tr -d ' ' 2>/dev/null || echo "")
   AM_PASSWORD=$(grep "^alertmanager_app_password" "${TF_DIR}/terraform.tfvars" \
@@ -64,11 +74,6 @@ else
     echo "      Add to ${TF_DIR}/terraform.tfvars:"
     echo "      alertmanager_email        = \"your@gmail.com\""
     echo "      alertmanager_app_password = \"xxxx xxxx xxxx xxxx\""
-    echo "      Or create manually:"
-    echo "      aws secretsmanager create-secret \\"
-    echo "        --name ${AM_SECRET_ID} \\"
-    echo "        --secret-string '{\"email\":\"your@gmail.com\",\"app_password\":\"xxxx xxxx xxxx xxxx\"}' \\"
-    echo "        --region ${REGION}"
     echo "  ⚠️  Continuing without alertmanager email config"
   fi
 fi
@@ -144,6 +149,9 @@ else
 fi
 
 # ── Check 3: Prod shared IAM resources ───────────────────────────────────────
+# GitHub Actions IAM role and ECR policy have no env suffix — they are
+# shared across dev and prod. Dev creates them on first apply. Prod must
+# import them to avoid duplicate creation errors.
 echo ""
 echo "[3/5] Checking shared IAM resources (prod only)..."
 
@@ -192,120 +200,177 @@ else
   echo "  ✅ Dev environment — shared IAM resources will be created"
 fi
 
-# ── Check 4: Cloudflare ACM validation record (prod only) ────────────────────
-# The ACM wildcard cert for *.domain.com always generates the same validation
-# CNAME regardless of which environment creates it. Dev creates it first.
-# For prod we must either import the existing record or create it if missing.
-# This is fully automated — no manual Cloudflare steps needed.
+# ── Check 4: Cloudflare ACM validation record ────────────────────────────────
+# The ACM wildcard cert for *.domain always generates the same validation
+# CNAME name regardless of which environment creates the cert. This means:
+#   - Dev creates the Cloudflare CNAME on first apply
+#   - Prod's dns module tries to create the same CNAME → conflict
+#   - On re-deploy after destroy, CNAME may not exist → needs re-import
+# Fix: check if CNAME exists in Cloudflare for BOTH environments.
+#   - If exists and not in state → import it
+#   - If not exists and cert exists → create it in Cloudflare + import
+#   - If not exists and cert not exists → let terraform create it
 echo ""
-echo "[4/5] Checking Cloudflare ACM validation record (prod only)..."
+echo "[4/5] Checking Cloudflare ACM validation record..."
 
-if [ "${ENV}" = "prod" ]; then
+if [ -z "${ZONE_ID}" ] || [ -z "${CF_TOKEN}" ] || [ -z "${DOMAIN}" ]; then
+  echo "  ⚠️  Missing Cloudflare credentials in tfvars — skipping"
+else
   IN_STATE=$(terraform state list 2>/dev/null | \
     grep 'dns.cloudflare_record.acm_validation' || echo "")
 
   if [ -n "${IN_STATE}" ]; then
     echo "  ✅ Cloudflare ACM validation record in state — no action needed"
   else
-    ZONE_ID=$(grep "^cloudflare_zone_id" "${TF_DIR}/terraform.tfvars" \
-      | sed 's/.*=\s*//' | tr -d '"' | tr -d "'" | tr -d ' ' 2>/dev/null || echo "")
-    CF_TOKEN=$(grep "^cloudflare_api_token" "${TF_DIR}/terraform.tfvars" \
-      | sed 's/.*=\s*//' | tr -d '"' | tr -d "'" | tr -d ' ' 2>/dev/null || echo "")
-    DOMAIN=$(grep "^domain_name" "${TF_DIR}/terraform.tfvars" \
-      | sed 's/.*=\s*//' | tr -d '"' | tr -d "'" | tr -d ' ' 2>/dev/null || echo "")
+    # Check if CNAME exists in Cloudflare
+    CF_RESPONSE=$(curl -s -X GET \
+      "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records?type=CNAME&per_page=100" \
+      -H "Authorization: Bearer ${CF_TOKEN}" \
+      -H "Content-Type: application/json" 2>/dev/null || echo "{}")
 
-    if [ -z "${ZONE_ID}" ] || [ -z "${CF_TOKEN}" ] || [ -z "${DOMAIN}" ]; then
-      echo "  ⚠️  Missing Cloudflare credentials in tfvars — skipping"
-    else
-      # Find existing ACM validation CNAME in Cloudflare
-      CF_RESPONSE=$(curl -s -X GET \
-        "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records?type=CNAME&per_page=100" \
-        -H "Authorization: Bearer ${CF_TOKEN}" \
-        -H "Content-Type: application/json" 2>/dev/null || echo "{}")
-
-      CF_RECORD_ID=$(echo "${CF_RESPONSE}" | python3 -c "
+    CF_RECORD_ID=$(echo "${CF_RESPONSE}" | python3 -c "
 import json,sys
 try:
     data = json.load(sys.stdin)
     for r in data.get('result', []):
-        if '_acm-challenge' in r.get('name', '') or \
-           r.get('name','').startswith('_'):
+        name = r.get('name', '')
+        if '_acm-challenge' in name or name.startswith('_'):
             print(r['id'])
             break
 except:
     pass
 " 2>/dev/null || echo "")
 
-      if [ -n "${CF_RECORD_ID}" ]; then
-        # Record exists — import it
-        echo "  ⚠️  Cloudflare ACM validation record exists — importing..."
-        terraform import \
-          "module.dns.cloudflare_record.acm_validation[\"*.${DOMAIN}\"]" \
-          "${ZONE_ID}/${CF_RECORD_ID}" 2>/dev/null && \
-          echo "  ✅ Imported Cloudflare ACM validation record" || \
-          echo "  ⚠️  Import failed — will attempt to handle during apply"
-      else
-        # Record does not exist — need to get ACM cert validation details
-        # Check if prod ACM cert already exists in state
-        CERT_ARN=$(terraform output -raw certificate_arn 2>/dev/null || echo "")
-        if [ -n "${CERT_ARN}" ]; then
-          # Get validation CNAME from existing cert
-          CNAME_NAME=$(aws acm describe-certificate \
-            --certificate-arn "${CERT_ARN}" \
-            --region "${REGION}" \
-            --query "Certificate.DomainValidationOptions[0].ResourceRecord.Name" \
-            --output text 2>/dev/null | sed 's/\.$//' || echo "")
-          CNAME_VALUE=$(aws acm describe-certificate \
-            --certificate-arn "${CERT_ARN}" \
-            --region "${REGION}" \
-            --query "Certificate.DomainValidationOptions[0].ResourceRecord.Value" \
-            --output text 2>/dev/null | sed 's/\.$//' || echo "")
+    if [ -n "${CF_RECORD_ID}" ]; then
+      # Record exists in Cloudflare — import into state
+      echo "  ⚠️  Cloudflare ACM validation record exists — importing..."
+      terraform import \
+        "module.dns.cloudflare_record.acm_validation[\"*.${DOMAIN}\"]" \
+        "${ZONE_ID}/${CF_RECORD_ID}" 2>/dev/null && \
+        echo "  ✅ Imported Cloudflare ACM validation record" || \
+        echo "  ⚠️  Import failed — terraform will handle during apply"
+    else
+      # Record does not exist — check if ACM cert already exists
+      # Use S3 state to avoid terraform CLI hang
+      STATE_FILE="/tmp/tfstate-${ENV}.json"
+      if [ ! -f "${STATE_FILE}" ]; then
+        BACKEND_CONFIG="${REPO_ROOT}/config/backend-${ENV}.hcl"
+        S3_BUCKET=$(grep "^bucket" "${BACKEND_CONFIG}" \
+          | sed 's/.*=\s*//' | tr -d '"' | tr -d ' ' 2>/dev/null || echo "")
+        S3_KEY=$(grep "^key" "${BACKEND_CONFIG}" \
+          | sed 's/.*=\s*//' | tr -d '"' | tr -d ' ' 2>/dev/null || echo "")
+        if [ -n "${S3_BUCKET}" ] && [ -n "${S3_KEY}" ]; then
+          aws s3 cp "s3://${S3_BUCKET}/${S3_KEY}" "${STATE_FILE}" \
+            --region "${REGION}" --quiet 2>/dev/null || true
+        fi
+      fi
 
-          if [ -n "${CNAME_NAME}" ] && [ -n "${CNAME_VALUE}" ]; then
-            echo "  ⚠️  Creating ACM validation CNAME in Cloudflare..."
-            NEW_ID=$(curl -s -X POST \
-              "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records" \
-              -H "Authorization: Bearer ${CF_TOKEN}" \
-              -H "Content-Type: application/json" \
-              --data "{
-                \"type\": \"CNAME\",
-                \"name\": \"${CNAME_NAME}\",
-                \"content\": \"${CNAME_VALUE}\",
-                \"ttl\": 60,
-                \"proxied\": false
-              }" | python3 -c "
+      CERT_ARN=""
+      if [ -f "${STATE_FILE}" ]; then
+        CERT_ARN=$(python3 -c "
+import json
+with open('${STATE_FILE}') as f:
+    state = json.load(f)
+print(state.get('outputs',{}).get('certificate_arn',{}).get('value',''))
+" 2>/dev/null || echo "")
+      fi
+
+      if [ -n "${CERT_ARN}" ]; then
+        # ACM cert exists — get validation CNAME details and create in Cloudflare
+        CNAME_NAME=$(aws acm describe-certificate \
+          --certificate-arn "${CERT_ARN}" \
+          --region "${REGION}" \
+          --query "Certificate.DomainValidationOptions[0].ResourceRecord.Name" \
+          --output text 2>/dev/null | sed 's/\.$//' || echo "")
+        CNAME_VALUE=$(aws acm describe-certificate \
+          --certificate-arn "${CERT_ARN}" \
+          --region "${REGION}" \
+          --query "Certificate.DomainValidationOptions[0].ResourceRecord.Value" \
+          --output text 2>/dev/null | sed 's/\.$//' || echo "")
+
+        if [ -n "${CNAME_NAME}" ] && [ -n "${CNAME_VALUE}" ]; then
+          echo "  ⚠️  Creating ACM validation CNAME in Cloudflare..."
+          NEW_ID=$(curl -s -X POST \
+            "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records" \
+            -H "Authorization: Bearer ${CF_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data "{
+              \"type\": \"CNAME\",
+              \"name\": \"${CNAME_NAME}\",
+              \"content\": \"${CNAME_VALUE}\",
+              \"ttl\": 60,
+              \"proxied\": false
+            }" | python3 -c "
 import json,sys
 try:
     data = json.load(sys.stdin)
     if data.get('success'):
         print(data['result']['id'])
     else:
-        print('')
+        import sys
+        print('', file=sys.stderr)
+        print('', end='')
 except:
-    print('')
+    print('', end='')
 " 2>/dev/null || echo "")
 
-            if [ -n "${NEW_ID}" ]; then
-              terraform import \
-                "module.dns.cloudflare_record.acm_validation[\"*.${DOMAIN}\"]" \
-                "${ZONE_ID}/${NEW_ID}" 2>/dev/null && \
-                echo "  ✅ Created and imported Cloudflare ACM validation record" || \
-                echo "  ⚠️  Created record but import failed"
-            else
-              echo "  ⚠️  Could not create Cloudflare record — may already exist"
-            fi
+          if [ -n "${NEW_ID}" ]; then
+            terraform import \
+              "module.dns.cloudflare_record.acm_validation[\"*.${DOMAIN}\"]" \
+              "${ZONE_ID}/${NEW_ID}" 2>/dev/null && \
+              echo "  ✅ Created and imported Cloudflare ACM validation record" || \
+              echo "  ⚠️  Created record but import failed"
+          else
+            echo "  ⚠️  Could not create Cloudflare record — may conflict"
           fi
         else
-          echo "  ✅ ACM cert not yet created — dns module will create record on first apply"
+          echo "  ⚠️  Could not get ACM cert validation details"
         fi
+      else
+        echo "  ✅ No existing cert or CNAME — terraform will create fresh"
       fi
     fi
   fi
+fi
+
+# ── Check 5: Delete old IAM policy versions ───────────────────────────────────
+# AWS limits IAM policies to 5 versions. When tf.sh applies changes to the
+# ECR policy (e.g. adding dev+prod repos), it creates a new version. After
+# 5 versions, further updates fail. Auto-delete non-default old versions.
+echo ""
+echo "[5/5] Cleaning up old IAM policy versions..."
+
+POLICY_ARN_CHECK=$(aws iam list-policies \
+  --query "Policies[?PolicyName=='petclinic-github-actions-ecr-policy'].Arn" \
+  --output text 2>/dev/null || echo "")
+
+if [ -n "${POLICY_ARN_CHECK}" ] && [ "${POLICY_ARN_CHECK}" != "None" ]; then
+  DEFAULT_VERSION=$(aws iam get-policy \
+    --policy-arn "${POLICY_ARN_CHECK}" \
+    --query "Policy.DefaultVersionId" \
+    --output text 2>/dev/null || echo "v1")
+
+  OLD_VERSIONS=$(aws iam list-policy-versions \
+    --policy-arn "${POLICY_ARN_CHECK}" \
+    --query "Versions[?IsDefaultVersion==\`false\`].VersionId" \
+    --output text 2>/dev/null || echo "")
+
+  if [ -n "${OLD_VERSIONS}" ]; then
+    for VERSION in ${OLD_VERSIONS}; do
+      aws iam delete-policy-version \
+        --policy-arn "${POLICY_ARN_CHECK}" \
+        --version-id "${VERSION}" 2>/dev/null && \
+        echo "  ✅ Deleted old policy version: ${VERSION}" || true
+    done
+  else
+    echo "  ✅ No old policy versions to clean up"
+  fi
 else
-  echo "  ✅ Dev environment — Cloudflare record will be created fresh"
+  echo "  ✅ Policy does not exist yet — will be created"
 fi
 
 echo ""
 echo "=============================================="
-echo " Pre-apply check complete!"
+echo " Pre-apply check complete! Safe to apply:"
+echo "   ./scripts/tf.sh ${ENV} apply"
 echo "=============================================="
