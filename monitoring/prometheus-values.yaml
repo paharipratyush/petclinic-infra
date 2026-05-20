@@ -28,7 +28,7 @@ serverFiles:
             labels:
               severity: critical
             annotations:
-              summary: "Service {{ $labels.job }} is down"
+              summary: "Service {{ $labels.job }} is {{ if eq $value 0.0 }}DOWN 🔴{{ else }}UP 🟢{{ end }}"
               description: "{{ $labels.job }} has been unreachable for more than 1 minute."
 
           - alert: HighErrorRate
