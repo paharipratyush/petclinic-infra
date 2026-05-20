@@ -1,6 +1,6 @@
 image:
   repository: 482352877891.dkr.ecr.ap-south-1.amazonaws.com/petclinic-prod/discovery-server
-  tag: 60ebde6
+  tag: "0342495"
 service:
   port: 8761
 # HA in prod — discovery-server must be highly available as all services depend on it

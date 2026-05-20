@@ -1,6 +1,6 @@
 image:
   repository: 482352877891.dkr.ecr.ap-south-1.amazonaws.com/petclinic-prod/config-server
-  tag: 60ebde6
+  tag: "0342495"
 service:
   port: 8888
 # HA in prod — config-server must be highly available as all services depend on it
