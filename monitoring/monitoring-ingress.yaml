@@ -5,7 +5,7 @@
 #
 # grafana-dev.praty.dev  → e.g. grafana-dev.your-domain.com
 # argocd-dev.praty.dev   → e.g. argocd-dev.your-domain.com
-# arn:aws:acm:ap-south-1:482352877891:certificate/fea2444e-311d-4960-8c1f-4e76924a7a6f      → your ACM certificate ARN from terraform output
+# arn:aws:acm:ap-south-1:482352877891:certificate/79f2beb8-715d-4b30-9fb7-9a91000c64cc      → your ACM certificate ARN from terraform output
 
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -15,7 +15,7 @@ metadata:
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:482352877891:certificate/fea2444e-311d-4960-8c1f-4e76924a7a6f
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:482352877891:certificate/79f2beb8-715d-4b30-9fb7-9a91000c64cc
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
     alb.ingress.kubernetes.io/ssl-redirect: "443"
     alb.ingress.kubernetes.io/group.name: petclinic-monitoring
@@ -43,7 +43,7 @@ metadata:
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:482352877891:certificate/fea2444e-311d-4960-8c1f-4e76924a7a6f
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:482352877891:certificate/79f2beb8-715d-4b30-9fb7-9a91000c64cc
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
     alb.ingress.kubernetes.io/ssl-redirect: "443"
     alb.ingress.kubernetes.io/group.name: petclinic-monitoring
@@ -73,7 +73,7 @@ metadata:
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:482352877891:certificate/fea2444e-311d-4960-8c1f-4e76924a7a6f
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:482352877891:certificate/79f2beb8-715d-4b30-9fb7-9a91000c64cc
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
     alb.ingress.kubernetes.io/ssl-redirect: "443"
     alb.ingress.kubernetes.io/group.name: petclinic-monitoring
