@@ -1,7 +1,7 @@
 image:
   # Filled automatically by scripts/generate-config.sh after terraform apply
   repository: 482352877891.dkr.ecr.ap-south-1.amazonaws.com/petclinic-dev/vets-service
-  tag: "v1.0.0"
+  tag: "a6e984f"
 service:
   port: 8083
 replicaCount: 2
