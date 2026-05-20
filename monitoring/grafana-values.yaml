@@ -13,7 +13,7 @@ persistence:
 # Format: https://grafana-{env}.{domain} or https://grafana.{domain}
 grafana.ini:
   server:
-    root_url: https://grafana-dev.praty.dev
+    root_url: https://grafana.praty.dev
 datasources:
   datasources.yaml:
     apiVersion: 1
