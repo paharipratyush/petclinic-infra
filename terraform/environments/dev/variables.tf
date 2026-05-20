@@ -129,3 +129,17 @@ variable "app_repo" {
   type        = string
   default     = "spring-petclinic-microservices"
 }
+
+variable "alertmanager_email" {
+  description = "Gmail address for alertmanager notifications"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "alertmanager_app_password" {
+  description = "Gmail app password for alertmanager"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
