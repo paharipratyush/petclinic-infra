@@ -79,9 +79,35 @@ helm_release_healthy() {
   return 0
 }
 
-# ── Step 1: kubectl config ────────────────────────────────────────────────────
+# ── Helper: Helm install with retry ──────────────────────────────────────────
+# Retries Helm installs up to 3 times with a delay between attempts.
+# Handles transient API server errors (net/http: request canceled) that occur
+# when EKS API server is still warming up after cluster creation.
+helm_install_with_retry() {
+  local max_attempts=3
+  local attempt=1
+  local delay=30
+
+  while [ "${attempt}" -le "${max_attempts}" ]; do
+    echo "  Attempt ${attempt}/${max_attempts}..."
+    if "$@"; then
+      return 0
+    fi
+    if [ "${attempt}" -lt "${max_attempts}" ]; then
+      echo "  ⚠️  Helm install failed — waiting ${delay}s before retry..."
+      sleep "${delay}"
+      delay=$((delay * 2))
+    fi
+    attempt=$((attempt + 1))
+  done
+
+  echo "  ❌ Helm install failed after ${max_attempts} attempts"
+  return 1
+}
+
+# ── Step 1: kubectl config + API server readiness ────────────────────────────
 echo ""
-echo "[1/10] Configuring kubectl..."
+echo "[1/10] Configuring kubectl and waiting for cluster to be fully ready..."
 aws eks update-kubeconfig \
   --name "${CLUSTER_NAME}" \
   --region "${AWS_REGION}"
@@ -89,7 +115,30 @@ aws eks update-kubeconfig \
 echo "  Waiting for nodes to be Ready (up to 5 min)..."
 kubectl wait --for=condition=Ready nodes --all --timeout=300s
 kubectl get nodes
-echo "  ✅ kubectl configured"
+
+# Wait for API server to be fully stable and able to serve OpenAPI schema.
+# EKS API server can take 2-5 minutes after nodes are Ready to fully
+# stabilize. Helm requires OpenAPI schema for validation — if the API server
+# is still warming up, Helm installs fail with "request canceled" errors.
+echo "  Waiting for API server to stabilize (OpenAPI schema check)..."
+for i in $(seq 1 20); do
+  if kubectl get --raw /openapi/v2 &>/dev/null 2>&1; then
+    echo "  ✅ API server ready (attempt ${i}/20)"
+    break
+  fi
+  if [ "${i}" -eq 20 ]; then
+    echo "  ⚠️  API server did not stabilize in time — proceeding anyway"
+  else
+    echo "  Waiting... attempt ${i}/20 (sleeping 15s)"
+    sleep 15
+  fi
+done
+
+# Extra buffer for CoreDNS and other system pods to be ready
+echo "  Waiting 30s for system pods to stabilize..."
+sleep 30
+
+echo "  ✅ kubectl configured and cluster ready"
 
 # ── Step 2: Namespaces ────────────────────────────────────────────────────────
 echo ""
@@ -136,7 +185,7 @@ else
       --subresource=status 2>/dev/null || true
   done
 
-  helm upgrade --install external-secrets \
+  helm_install_with_retry helm upgrade --install external-secrets \
     external-secrets/external-secrets \
     -n external-secrets \
     --version 0.14.4 \
@@ -154,7 +203,8 @@ helm repo update
 if helm_release_healthy "aws-load-balancer-controller" "kube-system" 1; then
   echo "  ✅ ALB Controller already running and healthy — skipping install"
 else
-  helm upgrade --install aws-load-balancer-controller \
+  helm_install_with_retry helm upgrade --install \
+    aws-load-balancer-controller \
     eks/aws-load-balancer-controller \
     -n kube-system \
     --version 1.8.1 \
@@ -200,7 +250,6 @@ sleep 60
 kubectl get applications -n argocd 2>/dev/null || true
 
 # ── Schema init order fix ─────────────────────────────────────────────────────
-# visits table has FK: visits.pet_id → pets.id (created by customers-service).
 echo "  Waiting for customers-service to be ready (DB schema init order)..."
 kubectl wait --for=condition=ready pod \
   -l app.kubernetes.io/name=customers-service \
@@ -238,7 +287,7 @@ echo "[8/10] Installing Karpenter..."
 if helm_release_healthy "karpenter" "kube-system" 1; then
   echo "  ✅ Karpenter already running and healthy — skipping install"
 else
-  helm upgrade --install karpenter \
+  helm_install_with_retry helm upgrade --install karpenter \
     oci://public.ecr.aws/karpenter/karpenter \
     --version 1.1.1 \
     -n kube-system \
@@ -283,7 +332,7 @@ helm repo add fluent \
 helm repo update
 
 echo "  Installing Prometheus..."
-helm upgrade --install prometheus \
+helm_install_with_retry helm upgrade --install prometheus \
   prometheus-community/prometheus \
   -n monitoring \
   --version 25.21.0 \
@@ -291,28 +340,26 @@ helm upgrade --install prometheus \
   --wait --timeout 10m
 
 echo "  Installing Loki..."
-helm upgrade --install loki grafana/loki \
+helm_install_with_retry helm upgrade --install loki grafana/loki \
   -n monitoring \
   --version 6.6.2 \
   -f "${REPO_ROOT}/monitoring/loki-values.yaml"
 
 echo "  Installing FluentBit..."
-helm upgrade --install fluent-bit fluent/fluent-bit \
+helm_install_with_retry helm upgrade --install fluent-bit fluent/fluent-bit \
   -n monitoring \
   --version 0.46.7 \
   -f "${REPO_ROOT}/monitoring/fluent-bit-values.yaml" \
   --wait --timeout 10m
 
 echo "  Installing Grafana..."
-helm upgrade --install grafana grafana/grafana \
+helm_install_with_retry helm upgrade --install grafana grafana/grafana \
   -n monitoring \
   --version 7.3.9 \
   -f "${REPO_ROOT}/monitoring/grafana-values.yaml" \
   --wait --timeout 10m
 
 # ── Alertmanager — inject credentials from Secrets Manager ───────────────────
-# Config stored as K8s Secret with placeholders — real credentials fetched
-# from AWS Secrets Manager at deploy time. Never committed to Git.
 echo "  Configuring Alertmanager..."
 AM_SECRET_ID="petclinic/${ENV}/alertmanager-email"
 
@@ -352,20 +399,12 @@ if aws secretsmanager describe-secret \
   fi
 else
   echo "  ⚠️  Alertmanager secret not found: ${AM_SECRET_ID}"
-  echo "      Create it with:"
-  echo "      aws secretsmanager create-secret \\"
-  echo "        --name ${AM_SECRET_ID} \\"
-  echo "        --secret-string '{\"email\":\"your@gmail.com\",\"app_password\":\"xxxx xxxx xxxx xxxx\"}' \\"
-  echo "        --region ${AWS_REGION}"
+  echo "      Run pre-apply-check.sh first to create it automatically"
 fi
 
-# Apply alertmanager manifest (Deployment, Service, PVC)
-# The Secret was already created above with real credentials
 kubectl apply -f "${REPO_ROOT}/monitoring/alertmanager.yaml"
-
 echo "  Applying Zipkin..."
 kubectl apply -f "${REPO_ROOT}/monitoring/zipkin.yaml"
-
 echo "  ✅ Monitoring stack installed"
 
 # ── Step 10: Ingresses ────────────────────────────────────────────────────────
