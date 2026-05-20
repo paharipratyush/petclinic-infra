@@ -54,30 +54,40 @@ resource "aws_iam_role" "github_actions" {
 }
 
 # ── ECR Push Policy ───────────────────────────────────────────────────────────
+# Uses wildcard petclinic-*/* to cover ALL environments (dev, prod, staging).
+# The role is shared across environments — restricting to one environment
+# would break CI/CD for the other. The OIDC trust policy already restricts
+# access to only the main branch of the app repo.
 resource "aws_iam_policy" "github_actions_ecr" {
   name = "${var.project}-github-actions-ecr-policy"
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
+        Sid      = "ECRAuth"
         Effect   = "Allow"
         Action   = ["ecr:GetAuthorizationToken"]
         Resource = "*"
       },
       {
+        Sid    = "ECRPush"
         Effect = "Allow"
         Action = [
           "ecr:BatchCheckLayerAvailability",
           "ecr:GetDownloadUrlForLayer",
+          "ecr:GetRepositoryPolicy",
+          "ecr:DescribeRepositories",
+          "ecr:ListImages",
+          "ecr:DescribeImages",
           "ecr:BatchGetImage",
           "ecr:InitiateLayerUpload",
           "ecr:UploadLayerPart",
           "ecr:CompleteLayerUpload",
-          "ecr:PutImage",
-          "ecr:DescribeRepositories",
-          "ecr:ListImages"
+          "ecr:PutImage"
         ]
-        Resource = "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/${var.project}-${var.environment}/*"
+        # Wildcard covers all environments — dev, prod, and any future envs
+        # Security is enforced by OIDC trust policy (main branch only)
+        Resource = "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/${var.project}-*/*"
       }
     ]
   })
