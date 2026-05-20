@@ -73,6 +73,53 @@ aws ecr get-login-password --region "${AWS_REGION}" | \
   docker login --username AWS --password-stdin "${ECR_REGISTRY}"
 echo "  ✅ Authenticated to ECR"
 
+# ── Ensure buildx builder is healthy ─────────────────────────────────────────
+# The petclinic-builder uses docker-container driver. After Docker Desktop
+# restarts, the builder's mount becomes stale and all builds fail with:
+#   "bind source path does not exist"
+# This block auto-detects a stale builder and recreates it — fully automated,
+# no manual "docker buildx rm" needed after every Docker Desktop restart.
+echo ""
+echo "[BUILDX] Checking buildx builder..."
+BUILDER_NAME="petclinic-builder"
+BUILDER_OK=false
+
+if docker buildx inspect "${BUILDER_NAME}" &>/dev/null 2>&1; then
+  # Builder exists — test if it actually works by running a no-op build
+  if docker buildx build \
+    --builder "${BUILDER_NAME}" \
+    --platform linux/arm64 \
+    --file - \
+    . <<< "FROM scratch" \
+    &>/dev/null 2>&1; then
+    BUILDER_OK=true
+    echo "  ✅ Builder ${BUILDER_NAME} is healthy"
+  else
+    echo "  ⚠️  Builder ${BUILDER_NAME} exists but is stale — recreating..."
+  fi
+else
+  echo "  ⚠️  Builder ${BUILDER_NAME} not found — creating..."
+fi
+
+if [ "${BUILDER_OK}" = "false" ]; then
+  # Remove stale builder (ignore errors if it doesn't exist)
+  docker buildx rm "${BUILDER_NAME}" 2>/dev/null || true
+  sleep 2
+
+  # Create fresh builder with docker-container driver
+  docker buildx create \
+    --name "${BUILDER_NAME}" \
+    --driver docker-container \
+    --use
+
+  # Bootstrap the builder (pulls buildkit image, verifies ARM64 support)
+  docker buildx inspect "${BUILDER_NAME}" --bootstrap
+  echo "  ✅ Builder ${BUILDER_NAME} created and ready"
+fi
+
+# Set this builder as active for all subsequent builds
+docker buildx use "${BUILDER_NAME}"
+
 declare -a SERVICES=(
   "config-server:spring-petclinic-config-server:8888"
   "discovery-server:spring-petclinic-discovery-server:8761"
@@ -119,7 +166,9 @@ for SERVICE_DEF in "${SERVICES[@]}"; do
   cp "${JAR_PATH}" "${BUILD_DIR}/${ARTIFACT_NAME}.jar"
   cp "${DOCKERFILE}" "${BUILD_DIR}/Dockerfile"
 
+  # Use named builder explicitly — avoids fallback to stale default builder
   if docker buildx build \
+    --builder "${BUILDER_NAME}" \
     --platform linux/arm64 \
     --build-arg "ARTIFACT_NAME=${ARTIFACT_NAME}" \
     --build-arg "EXPOSED_PORT=${EXPOSED_PORT}" \
