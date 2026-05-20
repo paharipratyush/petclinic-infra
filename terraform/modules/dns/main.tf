@@ -14,20 +14,32 @@ resource "aws_acm_certificate" "wildcard" {
 }
 
 # ── ACM validation record in Cloudflare ──────────────────────────────────────
-# ACM uses the IDENTICAL CNAME for both praty.dev and *.praty.dev validation.
-# Creating two Cloudflare records with the same name/value causes:
-#   "attempted to override existing record however didn't find an exact match"
-# Fix: only create ONE record by filtering to the wildcard domain only.
-# One CNAME is sufficient — ACM validates both domains from it.
+# Uses a static key "*.{domain}" so Terraform can plan this resource without
+# knowing the ACM cert details. The actual CNAME name/value come from the cert
+# but the map key is static — this resolves the "for_each unknown at plan time"
+# error that occurs on fresh state when the cert doesn't exist yet.
 resource "cloudflare_record" "acm_validation" {
   for_each = {
-    for dvo in aws_acm_certificate.wildcard.domain_validation_options :
-    dvo.domain_name => {
-      name  = trimsuffix(dvo.resource_record_name, ".")
-      value = trimsuffix(dvo.resource_record_value, ".")
-      type  = dvo.resource_record_type
+    "*.${var.domain_name}" = {
+      name  = trimsuffix(
+        one([for dvo in aws_acm_certificate.wildcard.domain_validation_options :
+          dvo.resource_record_name
+          if dvo.domain_name == "*.${var.domain_name}"
+        ]),
+        "."
+      )
+      value = trimsuffix(
+        one([for dvo in aws_acm_certificate.wildcard.domain_validation_options :
+          dvo.resource_record_value
+          if dvo.domain_name == "*.${var.domain_name}"
+        ]),
+        "."
+      )
+      type = one([for dvo in aws_acm_certificate.wildcard.domain_validation_options :
+        dvo.resource_record_type
+        if dvo.domain_name == "*.${var.domain_name}"
+      ])
     }
-    if dvo.domain_name == "*.${var.domain_name}"
   }
 
   zone_id         = var.cloudflare_zone_id
@@ -40,7 +52,6 @@ resource "cloudflare_record" "acm_validation" {
 }
 
 # ── Wait for ACM certificate validation ───────────────────────────────────────
-# Cert is already ISSUED from previous apply — this completes immediately.
 resource "aws_acm_certificate_validation" "wildcard" {
   certificate_arn = aws_acm_certificate.wildcard.arn
   depends_on      = [cloudflare_record.acm_validation]

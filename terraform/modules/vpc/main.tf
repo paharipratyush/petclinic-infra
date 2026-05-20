@@ -50,12 +50,13 @@ resource "aws_route_table" "public" {
 }
 
 resource "aws_route_table_association" "public" {
-  count = length(aws_subnet.public)
+  # Use length(var.public_subnet_cidrs) instead of length(aws_subnet.public)
+  # var.public_subnet_cidrs is known at plan time — aws_subnet.public is not
+  count = length(var.public_subnet_cidrs)
 
   subnet_id      = aws_subnet.public[count.index].id
   route_table_id = aws_route_table.public.id
 }
-
 # ── Security Group: EKS Cluster (control plane) ───────────────────────────────
 resource "aws_security_group" "eks_cluster" {
   name        = "${var.project}-${var.environment}-eks-cluster-sg"

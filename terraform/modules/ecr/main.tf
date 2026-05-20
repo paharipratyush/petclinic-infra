@@ -16,9 +16,11 @@ resource "aws_ecr_repository" "services" {
 }
 
 resource "aws_ecr_lifecycle_policy" "services" {
-  for_each = aws_ecr_repository.services
+  # Use var.service_names (known at plan time) instead of aws_ecr_repository.services
+  # (unknown until apply) to avoid "for_each unknown at plan time" error
+  for_each = toset(var.service_names)
 
-  repository = each.value.name
+  repository = aws_ecr_repository.services[each.key].name
 
   policy = jsonencode({
     rules = [

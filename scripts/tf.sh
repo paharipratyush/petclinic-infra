@@ -1,9 +1,10 @@
 #!/bin/bash
 # ============================================================
-# tf.sh — Terraform wrapper with phased apply for prod
+# tf.sh — Terraform wrapper
 #
 # Usage:
 #   ./scripts/tf.sh dev init
+#   ./scripts/tf.sh dev validate
 #   ./scripts/tf.sh dev plan
 #   ./scripts/tf.sh dev apply
 #   ./scripts/tf.sh prod apply
@@ -71,70 +72,25 @@ case "${CMD}" in
     ;;
 
   apply)
-    # ── Run pre-apply checks (imports, secret creation) ────────────────────
+    # ── Run pre-apply checks ───────────────────────────────────────────────
+    # Creates alertmanager secret, imports pre-existing shared resources
+    # (IAM role/policy, Cloudflare CNAME) so terraform doesn't fail on
+    # resource conflicts. Fully automated — no manual steps needed.
     echo "Running pre-apply checks..."
     "${SCRIPT_DIR}/pre-apply-check.sh" "${ENV}"
     echo ""
 
-    if [ "${ENV}" = "prod" ]; then
-      # ── Prod: Phased apply ───────────────────────────────────────────────
-      # Phase 1: Apply all modules EXCEPT dns
-      # Reason: dns module has for_each on aws_acm_certificate.domain_validation_options
-      # which is unknown until the cert is created. Terraform cannot plan this
-      # on a fresh state. Applying everything else first creates the cert,
-      # then phase 2 can apply dns successfully.
-      echo "=============================================="
-      echo " Prod apply — Phase 1/2: Infrastructure"
-      echo " (DNS module applied separately in Phase 2)"
-      echo "=============================================="
-      terraform apply \
-        -target=module.vpc \
-        -target=module.eks \
-        -target=module.ecr \
-        -target=module.rds \
-        -target=module.secrets \
-        -target=module.github_oidc \
-        -target=module.karpenter \
-        -target=aws_security_group_rule.karpenter_to_managed_node \
-        -target=aws_security_group_rule.managed_node_to_karpenter \
-        -auto-approve
-
-      echo ""
-      echo "=============================================="
-      echo " Prod apply — Phase 2/2: DNS"
-      echo "=============================================="
-
-      # Re-run pre-apply-check to import Cloudflare record now that cert exists
-      "${SCRIPT_DIR}/pre-apply-check.sh" "${ENV}"
-
-      terraform apply \
-        -target=module.dns \
-        -auto-approve
-
-      echo ""
-      echo "=============================================="
-      echo " Prod apply — Final: Catch any remaining"
-      echo "=============================================="
-      terraform apply -auto-approve
-
-    else
-      # ── Dev: Standard single apply ───────────────────────────────────────
-      if [ -f "${REPO_ROOT}/plan.out" ]; then
-        PLAN_AGE=$(( $(date +%s) - $(stat -c %Y "${REPO_ROOT}/plan.out" \
-          2>/dev/null || echo 0) ))
-        if [ "${PLAN_AGE}" -gt 1800 ]; then
-          echo "⚠️  Saved plan is older than 30 minutes — regenerating..."
-          rm -f "${REPO_ROOT}/plan.out"
-          terraform plan -out="${REPO_ROOT}/plan.out"
-        fi
-        terraform apply "${REPO_ROOT}/plan.out"
-        rm -f "${REPO_ROOT}/plan.out"
-      else
-        terraform plan -out="${REPO_ROOT}/plan.out"
-        terraform apply "${REPO_ROOT}/plan.out"
-        rm -f "${REPO_ROOT}/plan.out"
-      fi
-    fi
+    # ── Single apply for both dev and prod ────────────────────────────────
+    # The dns, ecr, and vpc modules previously used for_each/count with
+    # values unknown at plan time. This caused plan failures on fresh state.
+    # Fixed by using static keys in terraform/modules/{dns,ecr,vpc}/main.tf:
+    #   - dns:  static key "*.{domain}" instead of dynamic cert options
+    #   - ecr:  toset(var.service_names) instead of aws_ecr_repository ref
+    #   - vpc:  length(var.public_subnet_cidrs) instead of length(aws_subnet)
+    # Now a single plan+apply works correctly for both environments.
+    terraform plan -out="${REPO_ROOT}/plan.out"
+    terraform apply "${REPO_ROOT}/plan.out"
+    rm -f "${REPO_ROOT}/plan.out"
     ;;
 
   destroy)
