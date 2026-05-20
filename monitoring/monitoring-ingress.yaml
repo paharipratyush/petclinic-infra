@@ -5,7 +5,7 @@
 #
 # grafana-dev.praty.dev  → e.g. grafana-dev.your-domain.com
 # argocd-dev.praty.dev   → e.g. argocd-dev.your-domain.com
-# arn:aws:acm:ap-south-1:482352877891:certificate/3c5a9654-c315-4c59-a3b2-6bda51c2997d      → your ACM certificate ARN from terraform output
+# arn:aws:acm:ap-south-1:482352877891:certificate/8d42a8f0-106c-4bfd-b473-1cd7a3e7f4a4      → your ACM certificate ARN from terraform output
 
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -15,7 +15,7 @@ metadata:
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:482352877891:certificate/3c5a9654-c315-4c59-a3b2-6bda51c2997d
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:482352877891:certificate/8d42a8f0-106c-4bfd-b473-1cd7a3e7f4a4
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
     alb.ingress.kubernetes.io/ssl-redirect: "443"
     alb.ingress.kubernetes.io/group.name: petclinic-monitoring
@@ -24,7 +24,7 @@ metadata:
 spec:
   ingressClassName: alb
   rules:
-    - host: grafana.praty.dev
+    - host: grafana-dev.praty.dev
       http:
         paths:
           - path: /
@@ -43,7 +43,7 @@ metadata:
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:482352877891:certificate/3c5a9654-c315-4c59-a3b2-6bda51c2997d
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:482352877891:certificate/8d42a8f0-106c-4bfd-b473-1cd7a3e7f4a4
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
     alb.ingress.kubernetes.io/ssl-redirect: "443"
     alb.ingress.kubernetes.io/group.name: petclinic-monitoring
@@ -54,7 +54,7 @@ metadata:
 spec:
   ingressClassName: alb
   rules:
-    - host: argocd.praty.dev
+    - host: argocd-dev.praty.dev
       http:
         paths:
           - path: /
@@ -73,7 +73,7 @@ metadata:
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:482352877891:certificate/3c5a9654-c315-4c59-a3b2-6bda51c2997d
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:482352877891:certificate/8d42a8f0-106c-4bfd-b473-1cd7a3e7f4a4
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
     alb.ingress.kubernetes.io/ssl-redirect: "443"
     alb.ingress.kubernetes.io/group.name: petclinic-monitoring
@@ -82,7 +82,7 @@ metadata:
 spec:
   ingressClassName: alb
   rules:
-    - host: zipkin.praty.dev
+    - host: zipkin-dev.praty.dev
       http:
         paths:
           - path: /
