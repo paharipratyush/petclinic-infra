@@ -10,6 +10,15 @@
 # ==========================================================
 set -uo pipefail
 
+# ── Disable all interactive prompts ──────────────────────────────────────────
+# TF_IN_AUTOMATION disables terraform pager and interactive prompts
+# PAGER="" prevents any pager from being invoked
+# TF_CLI_ARGS adds -no-color to all terraform commands
+export TF_IN_AUTOMATION=1
+export PAGER=""
+export TF_CLI_ARGS="-no-color"
+export AWS_PAGER=""
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
@@ -270,7 +279,8 @@ cleanup_env() {
 
   if [ -d "${TF_DIR}/.terraform" ]; then
     cd "${TF_DIR}"
-    terraform destroy -auto-approve 2>&1 | tail -10
+    # TF_IN_AUTOMATION=1 disables pager — no 'q' keypress needed
+    TF_IN_AUTOMATION=1 terraform destroy -auto-approve 2>&1 | tail -10
     cd "${REPO_ROOT}"
     echo "  ✅ Terraform destroy complete"
   fi
