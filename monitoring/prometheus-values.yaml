@@ -56,9 +56,9 @@ serverFiles:
               summary: "High latency on {{ $labels.job }}"
               description: "{{ $labels.job }} p95 latency is above 500ms for 5 minutes."
 
-          # namespace=~"petclinic-dev" is replaced by generate-config.sh
+          # namespace=~"petclinic-prod" is replaced by generate-config.sh
           - alert: PodRestartLoop
-            expr: increase(kube_pod_container_status_restarts_total{namespace=~"petclinic-dev"}[15m]) > 3
+            expr: increase(kube_pod_container_status_restarts_total{namespace=~"petclinic-prod"}[15m]) > 3
             for: 0m
             labels:
               severity: critical
@@ -66,12 +66,12 @@ serverFiles:
               summary: "Pod {{ $labels.pod }} is restart-looping"
               description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has restarted more than 3 times in 15 minutes."
 
-          # namespace=~"petclinic-dev" is replaced by generate-config.sh
+          # namespace=~"petclinic-prod" is replaced by generate-config.sh
           - alert: HighMemoryUsage
             expr: |
-              container_memory_working_set_bytes{namespace=~"petclinic-dev",container!=""}
+              container_memory_working_set_bytes{namespace=~"petclinic-prod",container!=""}
               /
-              container_spec_memory_limit_bytes{namespace=~"petclinic-dev",container!=""}
+              container_spec_memory_limit_bytes{namespace=~"petclinic-prod",container!=""}
               > 0.8
             for: 5m
             labels:
@@ -103,20 +103,20 @@ extraScrapeConfigs: |
   - job_name: api-gateway
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['api-gateway.petclinic-dev:8080']
+      - targets: ['api-gateway.petclinic-prod:8080']
   - job_name: customers-service
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['customers-service.petclinic-dev:8081']
+      - targets: ['customers-service.petclinic-prod:8081']
   - job_name: visits-service
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['visits-service.petclinic-dev:8082']
+      - targets: ['visits-service.petclinic-prod:8082']
   - job_name: vets-service
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['vets-service.petclinic-dev:8083']
+      - targets: ['vets-service.petclinic-prod:8083']
   - job_name: genai-service
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['genai-service.petclinic-dev:8084']
+      - targets: ['genai-service.petclinic-prod:8084']
