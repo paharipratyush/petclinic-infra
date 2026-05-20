@@ -29,7 +29,6 @@ tf_output() {
   local KEY="$1"
   local STATE_FILE="/tmp/tfstate-${ENV}.json"
 
-  # Download state if not already cached this session
   if [ ! -f "${STATE_FILE}" ]; then
     BACKEND_CONFIG="${REPO_ROOT}/config/backend-${ENV}.hcl"
     S3_BUCKET=$(grep "^bucket" "${BACKEND_CONFIG}" \
@@ -77,7 +76,6 @@ AWS_REGION=$(grep "^aws_region" "${TFVARS}" \
   || aws configure get region 2>/dev/null \
   || echo "ap-south-1")
 
-# Validate all required outputs were read
 for VAR in CLUSTER_NAME LB_ROLE_ARN VPC_ID ESO_ROLE_ARN CERT_ARN \
            KARPENTER_ROLE_ARN KARPENTER_QUEUE KARPENTER_INSTANCE_PROFILE; do
   if [ -z "${!VAR}" ]; then
@@ -147,6 +145,61 @@ helm_install_with_retry() {
   return 1
 }
 
+# ── Helper: inject alertmanager credentials ───────────────────────────────────
+# Uses Python to replace placeholders — preserves spaces in Gmail app passwords.
+# Shell sed/variable substitution strips spaces, breaking authentication.
+# Gmail app passwords are formatted as "xxxx xxxx xxxx xxxx" (spaces required).
+inject_alertmanager_credentials() {
+  local SECRET_ID="$1"
+  local REGION="$2"
+  local YAML_FILE="$3"
+  local OUTPUT_FILE="$4"
+
+  python3 - << PYEOF
+import json, subprocess, sys
+
+try:
+    secret_str = subprocess.check_output([
+        "aws", "secretsmanager", "get-secret-value",
+        "--secret-id", "${SECRET_ID}",
+        "--region", "${REGION}",
+        "--query", "SecretString",
+        "--output", "text"
+    ]).decode().strip()
+    secret = json.loads(secret_str)
+    email    = secret["email"]
+    password = secret["app_password"]
+except Exception as e:
+    print(f"  ⚠️  Could not read secret: {e}", file=sys.stderr)
+    sys.exit(1)
+
+with open("${YAML_FILE}") as f:
+    content = f.read()
+
+content = content.replace("ALERTMANAGER_EMAIL_PLACEHOLDER", email)
+content = content.replace("ALERTMANAGER_PASSWORD_PLACEHOLDER", password)
+
+# Extract just the alertmanager.yml section from the K8s Secret manifest
+lines = content.split("\n")
+config_lines = []
+found = False
+for line in lines:
+    if "alertmanager.yml: |" in line:
+        found = True
+        continue
+    if found and line.startswith("---"):
+        break
+    if found:
+        # Strip 4-space indentation from the K8s Secret data block
+        config_lines.append(line[4:] if len(line) >= 4 else line)
+
+with open("${OUTPUT_FILE}", "w") as f:
+    f.write("\n".join(config_lines))
+
+print(f"  ✅ Alertmanager config written: email={email}, password length={len(password)}")
+PYEOF
+}
+
 # ── Step 1: kubectl config + API server readiness ────────────────────────────
 echo ""
 echo "[1/10] Configuring kubectl and waiting for cluster to be fully ready..."
@@ -176,7 +229,6 @@ for i in $(seq 1 20); do
   fi
 done
 
-# Extra buffer for CoreDNS and system pods
 echo "  Waiting 30s for system pods to stabilize..."
 sleep 30
 echo "  ✅ kubectl configured and cluster ready"
@@ -291,6 +343,8 @@ sleep 60
 kubectl get applications -n argocd 2>/dev/null || true
 
 # ── Schema init order fix ─────────────────────────────────────────────────────
+# visits table has FK on pets table created by customers-service.
+# If visits-service starts first it crashes with FK constraint error.
 echo "  Waiting for customers-service to be ready (DB schema init order)..."
 kubectl wait --for=condition=ready pod \
   -l app.kubernetes.io/name=customers-service \
@@ -400,49 +454,40 @@ helm_install_with_retry helm upgrade --install grafana grafana/grafana \
   -f "${REPO_ROOT}/monitoring/grafana-values.yaml" \
   --wait --timeout 10m
 
-# ── Alertmanager credentials from Secrets Manager ────────────────────────────
+# ── Alertmanager — inject credentials from Secrets Manager ───────────────────
+# IMPORTANT: Uses Python helper to preserve spaces in Gmail app passwords.
+# Shell variable substitution strips spaces — "kyxc auvf mqvy dmvs" becomes
+# "kyxcauvfmqvydmvs" which is invalid. Python string replace preserves them.
 echo "  Configuring Alertmanager..."
 AM_SECRET_ID="petclinic/${ENV}/alertmanager-email"
+AM_CONFIG_FILE="/tmp/alertmanager-${ENV}.yml"
 
 if aws secretsmanager describe-secret \
   --secret-id "${AM_SECRET_ID}" \
   --region "${AWS_REGION}" &>/dev/null 2>&1; then
 
-  AM_SECRET_VAL=$(aws secretsmanager get-secret-value \
-    --secret-id "${AM_SECRET_ID}" \
-    --region "${AWS_REGION}" \
-    --query "SecretString" --output text 2>/dev/null || echo "")
+  if inject_alertmanager_credentials \
+    "${AM_SECRET_ID}" \
+    "${AWS_REGION}" \
+    "${REPO_ROOT}/monitoring/alertmanager.yaml" \
+    "${AM_CONFIG_FILE}"; then
 
-  if [ -n "${AM_SECRET_VAL}" ]; then
-    AM_EMAIL=$(echo "${AM_SECRET_VAL}" | python3 -c \
-      "import json,sys; print(json.load(sys.stdin)['email'])" 2>/dev/null || echo "")
-    AM_PASSWORD=$(echo "${AM_SECRET_VAL}" | python3 -c \
-      "import json,sys; print(json.load(sys.stdin)['app_password'])" 2>/dev/null || echo "")
-
-    if [ -n "${AM_EMAIL}" ] && [ -n "${AM_PASSWORD}" ]; then
-      AM_CONFIG=$(sed \
-        -e "s|ALERTMANAGER_EMAIL_PLACEHOLDER|${AM_EMAIL}|g" \
-        -e "s|ALERTMANAGER_PASSWORD_PLACEHOLDER|${AM_PASSWORD}|g" \
-        "${REPO_ROOT}/monitoring/alertmanager.yaml" | \
-        awk '/^  alertmanager\.yml: \|/{found=1; next} \
-             found && /^---/{exit} \
-             found{print substr($0,5)}')
-
-      kubectl delete secret alertmanager-config \
-        -n monitoring 2>/dev/null || true
-      kubectl create secret generic alertmanager-config \
-        -n monitoring \
-        --from-literal="alertmanager.yml=${AM_CONFIG}"
-      echo "  ✅ Alertmanager credentials injected from Secrets Manager"
-    else
-      echo "  ⚠️  Could not parse alertmanager credentials"
-    fi
+    kubectl delete secret alertmanager-config \
+      -n monitoring 2>/dev/null || true
+    kubectl create secret generic alertmanager-config \
+      -n monitoring \
+      --from-file="alertmanager.yml=${AM_CONFIG_FILE}"
+    echo "  ✅ Alertmanager credentials injected from Secrets Manager"
+  else
+    echo "  ⚠️  Could not inject alertmanager credentials"
   fi
 else
-  echo "  ⚠️  Alertmanager secret not found — run pre-apply-check.sh first"
+  echo "  ⚠️  Alertmanager secret not found: ${AM_SECRET_ID}"
+  echo "      Run pre-apply-check.sh first to auto-create it"
 fi
 
 kubectl apply -f "${REPO_ROOT}/monitoring/alertmanager.yaml"
+
 echo "  Applying Zipkin..."
 kubectl apply -f "${REPO_ROOT}/monitoring/zipkin.yaml"
 echo "  ✅ Monitoring stack installed"
